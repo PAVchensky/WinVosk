@@ -1,4 +1,8 @@
-# WinVosk 1.1
+<p align="center">
+  <img src="docs/img/WinVosk_banner.png" alt="WinVosk — offline dictation for Windows" width="720">
+</p>
+
+# WinVosk
 
 Offline dictation for Windows. Hold a key combination, speak, let go — and the
 recognised text is typed straight into the window you were typing in, at the
@@ -9,7 +13,7 @@ call of any kind: the speech model runs locally, on the CPU, through the
 [Vosk](https://github.com/alphacep/vosk-api) decoder.
 
 ```
-WinVosk 1.1 · Python 3.14 · vosk 0.3.45 · Vosk models for 26 languages
+Python 3.14 · vosk 0.3.45 · Vosk models for 26 languages
 Windows x64 · no installer · no admin rights · one folder
 ```
 
@@ -616,7 +620,7 @@ Notes:
 
 ## What it deliberately does not do
 
-- **Your hotkey takes its combination away from Windows while the app is
+- **Your hotkey takes its combination away from Windows while the app
   runs.** That is the point: it is what stops the shortcut from firing behind
   WinVosk. Only the last key is taken — the modifiers always reach Windows, so
   they can never be left stuck down.

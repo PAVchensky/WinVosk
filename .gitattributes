@@ -1,0 +1,41 @@
+# Line endings, pinned rather than inherited from core.autocrlf.
+#
+# Without this, the same commit checks out differently depending on who clones
+# it and what their git config says. Git had already warned that LF in the
+# working copy would be replaced by CRLF on this machine.
+
+* text=auto
+
+# A .bat is executed by cmd.exe, which wants CRLF and misbehaves without it.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Python sources are read by the interpreter and by compileall; LF is what the
+# index should hold on every platform.
+*.py   text eol=lf
+*.spec text eol=lf
+
+# Scripts and configuration, where a stray CR breaks a parser.
+*.sh   text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# Windows-native formats: never touched.
+*.ico     binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.wav     binary
+*.pyd     binary
+*.dll     binary
+*.exe     binary
+*.zip     binary
+*.fst     binary
+*.mdl     binary
+*.ie      binary
+*.final   binary
+*.conf    binary
+*.int     binary
+*.txt     binary

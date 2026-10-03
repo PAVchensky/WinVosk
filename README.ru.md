@@ -1,4 +1,8 @@
-# WinVosk 1.1
+<p align="center">
+  <img src="docs/img/WinVosk_banner.png" alt="WinVosk — оффлайновая диктовка для Windows" width="720">
+</p>
+
+# WinVosk
 
 Оффлайновая диктовка для Windows. Зажмите сочетание клавиш, скажите фразу,
 отпустите — и распознанный текст сам напечатается в том окне, где вы печатали,
@@ -9,7 +13,7 @@
 [Vosk](https://github.com/alphacep/vosk-api).
 
 ```
-WinVosk 1.1 · Python 3.14 · vosk 0.3.45 · модели Vosk для 26 языков
+Python 3.14 · vosk 0.3.45 · модели Vosk для 26 языков
 Windows x64 · без установщика · без прав администратора · одна папка
 ```
 
