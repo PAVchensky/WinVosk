@@ -1,245 +1,188 @@
 <p align="center">
-  <img src="docs/img/WinVosk_banner.png" alt="WinVosk — offline dictation for Windows" width="720">
+  <img src="docs/img/WinVosk_banner.png" alt="WinVosk — offline speech-to-text for Windows" width="720">
 </p>
 
-# WinVosk
+<h1 align="center">WinVosk</h1>
 
-Offline dictation for Windows. Hold a key combination, speak, let go — and the
-recognised text is typed straight into the window you were typing in, at the
-caret, in Russian or English.
+<p align="center">
+  Offline speech-to-text for Windows. Hold a hotkey, speak, release — WinVosk types the recognized text directly into the active application.
+</p>
 
-Nothing leaves the machine. There is no account, no telemetry and no network
-call of any kind: the speech model runs locally, on the CPU, through the
-[Vosk](https://github.com/alphacep/vosk-api) decoder.
+<p align="center">
+  <a href="https://github.com/PAVchensky/WinVosk/releases">
+    <img src="https://img.shields.io/github/v/release/PAVchensky/WinVosk?style=flat-square" alt="Latest release">
+  </a>
+  <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4?style=flat-square" alt="Windows x64">
+  <img src="https://img.shields.io/badge/Python-3.14-3776AB?style=flat-square" alt="Python 3.14">
+  <img src="https://img.shields.io/badge/Vosk-0.3.45-111111?style=flat-square" alt="Vosk 0.3.45">
+  <img src="https://img.shields.io/badge/network-none-2EA44F?style=flat-square" alt="No network">
+  <img src="https://img.shields.io/github/license/PAVchensky/WinVosk?style=flat-square" alt="License">
+</p>
 
+<p align="center">
+  <a href="README.ru.md">Русская версия</a>
+</p>
+
+> **Private by design:** speech recognition runs locally on your CPU. No account, telemetry, cloud API, or network call is required.
+
+---
+
+## TL;DR
+
+**WinVosk** is an offline dictation utility for Windows.
+
+Press a hotkey, speak, and release it. The recognized text is typed into the window that was active when dictation started.
+
+* **Local speech recognition** — Vosk runs entirely on the machine.
+* **No clipboard insertion** — text is sent as Unicode keyboard input.
+* **No installation** — unpack one folder and run the executable.
+* **No administrator rights** — the application can live anywhere you can write to.
+* **Russian and English UI** — switch languages without restarting.
+* **32 Vosk languages** — replace the bundled model with another supported model.
+* **Custom vocabulary** — correct words the model repeatedly mishears.
+* **Diagnostic tooling** — inspect the active model, microphone, hotkeys, settings, and logs.
+
+```text
+Python 3.14
+vosk 0.3.45
+Windows x64
+CPU-only inference
+No installer
+No admin rights
+One portable folder
 ```
-Python 3.14 · vosk 0.3.45 · Vosk models for 32 languages
-Windows x64 · no installer · no admin rights · one folder
-```
 
-**Read this in Russian: [README.ru.md](README.ru.md)**
+---
 
-- **Push to talk by default, toggle if you prefer.** Recording lasts exactly as
-  long as you hold the keys — or one press starts it and the next one stops it,
-  if you turn on **Переключать запись**. See
-  [Recording mode](#recording-mode).
-- **Layout independent.** Text is typed as `KEYEVENTF_UNICODE` keystrokes, so
-  Russian comes out right with a Latin layout selected. The clipboard is never
-  used to insert anything.
-- **Your own words.** A plain text list fixes the words the model keeps
-  mishearing — see [Custom vocabulary](#custom-vocabulary-phrasestxt).
-- **No console, ever.** Tray icon, panel, chip. `--diagnose` writes a report you
-  can read in Notepad if you ever need one.
+## Features
+
+* ⚡ **Push-to-talk dictation** → hold a hotkey while speaking, then release it to finish the sentence.
+* 🎯 **Direct Unicode typing** → recognized text reaches the active application through `KEYEVENTF_UNICODE`, so Russian text works even with a Latin keyboard layout selected.
+* 🛡️ **Offline by default** → the microphone and speech model stay on the local machine; there is no upload path.
+* 🧩 **Custom vocabulary correction** → add your own words and phrases to `phrases.txt`; WinVosk fixes close recognition misses after decoding.
+* 🔧 **Portable diagnostics** → `--diagnose` produces a readable report covering the model, microphone, hotkeys, settings, and runtime environment.
 
 ---
 
 ## Contents
 
-1. [Install and run](#install-and-run)
-2. [How to dictate](#how-to-dictate)
-3. [The panel and the tray](#the-panel-and-the-tray)
-4. [Settings, every one of them](#settings-every-one-of-them)
-5. [Custom vocabulary (`phrases.txt`)](#custom-vocabulary-phrasestxt)
-6. [If it recognises badly](#if-it-recognises-badly)
-7. [Models and languages](#models-and-languages)
-8. [What it deliberately does not do](#what-it-deliberately-does-not-do)
-9. [Files and folders](#files-and-folders)
-10. [When something goes wrong](#when-something-goes-wrong)
-11. [Building from source](#building-from-source)
-12. [Upstream](#upstream)
+1. [Install and Run](#install-and-run)
+2. [How to Dictate](#how-to-dictate)
+3. [The Panel and Tray](#the-panel-and-tray)
+4. [Settings](#settings)
+5. [Custom Vocabulary](#custom-vocabulary-phrases)
+6. [Troubleshooting Recognition](#troubleshooting-recognition)
+7. [Models and Languages](#models-and-languages)
+8. [What WinVosk Does Not Do](#what-winvosk-does-not-do)
+9. [Files and Folders](#files-and-folders)
+10. [Diagnostics](#diagnostics)
+11. [Building from Source](#building-from-source)
+12. [Architecture](#architecture)
+13. [Upstream](#upstream)
 
 ---
 
-## Install and run
+# Install and Run
 
-### The ready-made folder
+## Ready-made Release
 
-Download the archive and **unpack it**. Do not run the exe from inside the zip:
-Windows cannot read `_internal\` from an archive, and the app would die on a
-missing file with nothing to show for it.
+Download the latest archive from the [Releases page](https://github.com/PAVchensky/WinVosk/releases) and unpack it completely.
 
-1. Unpack `WinVosk-1.1.zip` into any folder you can write to — the Desktop, a
-   folder in `D:\`, anywhere. **Not** under `C:\Program Files`: the app writes
-   its log and its settings next to itself, and that folder is read-only without
-   administrator rights.
-2. Double-click `WinVosk.exe`.
-3. Look for the microphone icon in the tray, next to the clock. It may be under
-   the `^` arrow.
+**Do not run `WinVosk.exe` from inside the ZIP archive.** Windows cannot reliably read the bundled `_internal\` files from an archive.
 
-That is the whole installation. There is nothing to register, nothing to install
-into the system and no service to stop.
+### 1. Unpack the archive
 
-The folder you unpacked **is** the application. It can be moved, renamed or put
-on a USB stick at any time — copy the whole folder, and nothing inside it needs
-editing.
+Use any writable directory:
 
+```text
+Desktop\
+D:\Apps\
+D:\AI\
+C:\Users\<you>\Tools\
 ```
+
+Avoid:
+
+```text
+C:\Program Files\
+```
+
+The application writes settings and logs next to itself, so a read-only directory requires administrator rights.
+
+### 2. Start WinVosk
+
+Run:
+
+```text
+WinVosk.exe
+```
+
+The application starts in the Windows system tray.
+
+Look for the microphone icon next to the clock. It may be hidden behind the `^` tray overflow button.
+
+### 3. Start dictating
+
+Use one of the default hotkeys:
+
+```text
+Win + Ctrl + Right
+Alt + Win
+```
+
+Hold the combination, speak, and release it.
+
+That's the complete installation.
+
+There is:
+
+* no installer;
+* no service;
+* no system registration;
+* no administrator requirement;
+* no startup folder entry.
+
+The unpacked directory **is the application**. Move or rename the folder whenever you want.
+
+## Portable Layout
+
+```text
 WinVosk\
-├── WinVosk.exe          the application
-├── _internal\           Python, Tcl/Tk, Vosk + Kaldi, PortAudio, Pillow
-├── models\              the speech model
-├── phrases.example.txt  copy it to phrases.txt and fill it in
-├── logs\                app.log and the dated dictation history
-└── settings.json        written by the app on the first change
+├── WinVosk.exe
+├── _internal\
+│   ├── Python
+│   ├── Tcl/Tk
+│   ├── Vosk + Kaldi
+│   ├── PortAudio
+│   └── Pillow
+├── models\
+│   └── <speech model>
+├── phrases.example.txt
+├── logs\
+│   ├── app.log
+│   └── YYYY-MM-DD.txt
+└── settings.json
 ```
 
-### It starts in the tray
+The application uses relative paths and can live anywhere.
 
-The app **always starts in the tray**: no panel appears, nothing flashes, and the
-focus is not taken from whatever you were typing in. All that appears is the
-microphone icon next to the clock.
+## Start at Windows Login
 
-Open the panel with a left click on the tray icon, or from the tray menu (right
-click) → **Show the panel**. Closing the window puts it back in the tray rather
-than quitting.
+Open:
 
-### Start it automatically at login
-
-Open the panel → **Настройки** → tick **Автозапуск с Windows**. That writes one
-`HKCU\...\CurrentVersion\Run` value, per user, no administrator rights, no
-startup folder, no scheduled task. Untick it to remove it.
-
-### Running it from the source checkout
-
-If you have the source tree rather than the built folder:
-
-```powershell
-.\WinVosk.bat
+```text
+Panel → Settings → Start with Windows
 ```
 
-The launcher finds the virtual environment next to itself, so it works from any
-working directory. The equivalent is
+WinVosk writes a per-user value under:
 
-```powershell
-.\.venv\Scripts\python.exe .\src\run.py
+```text
+HKCU\...\CurrentVersion\Run
 ```
 
-Use `pythonw.exe` instead of `python.exe` for a start with no console window.
+No administrator rights, startup folder, or scheduled task are required.
 
----
-
-## How to dictate
-
-| I want to | Do this |
-| --- | --- |
-| Dictate a sentence | hold `Win + Ctrl + Right` **or** `Alt + Win`, speak, let go |
-| Dictate, if **Переключать запись** is on | press the combination once to start, once more to stop |
-| Dictate with the mouse | hold the **Удерживайте** button in the panel |
-| Dictate several sentences with one hand | keep `Win` and `Ctrl` down and tap `→` once per sentence |
-| Finish a long sentence without letting go | **Стоп** in the panel, or tray → **Остановить запись** |
-| Stop everything | release the keys; tray → **Выход** quits |
-| Get the text out | **Копировать** in the panel, or tray → **Скопировать текст** |
-| Open the panel | left-click the tray icon |
-| Put the panel away | close the window — it goes to the tray, it does not quit |
-
-Two shipped combinations, and both are push to talk:
-
-- `Alt + Win` — two keys, both must be released between sentences.
-- `Win + Ctrl + Right` — the combination completes on the arrow, so you can keep
-  the modifiers down and tap the arrow for each sentence.
-
-While a recording runs, a small dark chip sits in the middle of the screen with
-eleven bars and an elapsed timer. It never takes the focus, so the words still go
-into your document and not into the chip.
-
-<img src="docs/img/chip.gif" width="348" alt="The recording chip: eleven thin pink bars over an elapsed clock, animating while a recording is running">
-
-**You can change the combination** in **Настройки**; see
-[Settings](#settings-every-one-of-them).
-
-### Recording mode
-
-Recording lasts exactly as long as you hold the keys, and that is the shipped
-default: release, and the session closes, the text goes to
-`logs\YYYY-MM-DD.txt`, and the caret is left where the last word landed.
-
-**Переключать запись** in the **Настройки** tab replaces that with a toggle.
-
-| | Hold (default) | Toggle |
-| --- | --- | --- |
-| press | start | start |
-| release | stop | nothing — the keys are ignored |
-| press again | start a new sentence | stop |
-| Finish a sentence a second press never comes for | release the keys | **Стоп** in the panel, **Остановить запись** in the tray, or the three-minute ceiling |
-
-A held session ends by letting go, and a key release that never arrives cannot
-happen. A toggle ends by pressing again, and a press that never arrives would
-leave the microphone open — so in that mode **Стоп**, the tray menu and the
-three-minute ceiling are what stop a recording. All three stay available for as
-long as it runs. That is why the switch is off by default.
-
-A session is cut off after three minutes either way, so nothing can record
-forever.
-
----
-
-## The panel and the tray
-
-The panel has two tabs.
-
-**Диктовка** — the recognised text as it arrives, with the model name in the
-corner, the hold button, **Стоп**, **Копировать** and **Очистить**, and the hotkey
-in the footer. This tab does nothing configurable; it is the transcript.
-
-<img src="docs/img/panel-ru.png" width="46%" alt="WinVosk panel in Russian, showing a finished dictation: перенести файлы в дропбокс и отправить отчёт">
-<img src="docs/img/panel-en.png" width="46%" alt="The same WinVosk window in English, after switching the interface language in place">
-
-**Настройки** — everything you can change. See below.
-
-The tray icon is the app's real home:
-
-| Action | Result |
-| --- | --- |
-| left click | open the panel and focus it |
-| right click | the menu: hold-to-dictate hint, stop, show/hide panel, copy, clear, quit |
-
-Note that a left click **takes the focus** — that is deliberate, you asked for the
-panel. If the panel is left in front while you dictate, live typing is held back
-rather than typed into the panel: the words still reach the panel and the diary,
-but not your document. Close the panel before you carry on.
-
----
-
-## Settings, every one of them
-
-Everything below is on the **Настройки** tab. A change is saved the moment you
-make it and is in force immediately — no restart. If a setting cannot be saved,
-the checkbox goes back to what is really in effect and tells you why, rather
-than lying.
-
-### Where the text goes
-
-| Setting | What it does | Default |
-| --- | --- | --- |
-| **Печатать в активное окно** | types the recognised words at the caret of whatever window was in front, as they are recognised | **on** |
-| **Сразу копировать в буфер** | also copies each finished session to the clipboard | **off** |
-| **Исправлять свои слова** | replaces a near miss of one of your own words with your word | **on** |
-
-**Печатать в активное окно** off means nothing is typed anywhere: the session is
-still recognised, still shown in the panel and still written to
-`logs\YYYY-MM-DD.txt`, and **Копировать** is how you get it out.
-
-**Сразу копировать в буфер** overwrites the clipboard after every session, which
-is worth leaving off unless something else in your workflow wants the text there.
-It is a one-way operation: other programs read from the clipboard, and this app
-still inserts text as keystrokes.
-
-**Исправлять свои слова** works from the words in `phrases.txt` — see
-[Custom vocabulary](#custom-vocabulary-phrasestxt). It works on finished phrases
-only, never on the half-heard text, and every replacement is written to
-`logs\app.log` so you can see whether it is helping.
-
-### Checking your own words
-
-The **Проверить свои слова** button under that checkbox asks the model which of
-your words it can hear at all. It takes about a second and works from the tray —
-the panel does not have to be open. The detail is in
-[Custom vocabulary](#custom-vocabulary-phrasestxt).
-
-### Startup
-
-**Автозапуск с Windows** — start at login, with no console and no panel. The
-equivalent from a shell:
+From PowerShell:
 
 ```powershell
 .\.venv\Scripts\python.exe .\src\run.py --autostart on
@@ -247,84 +190,320 @@ equivalent from a shell:
 .\.venv\Scripts\python.exe .\src\run.py --autostart off
 ```
 
-### Language
+---
 
-**Русский** and **English**, applied at once. The panel, the tray menu, the
-notifications and the reports all repaint in the new language without a restart
-and without losing the text in the box, the recording state or the switch
-positions.
+# How to Dictate
 
-The choice is remembered in `settings.json`.
+| Goal                      | Action                                                            |
+| ------------------------- | ----------------------------------------------------------------- |
+| Dictate a sentence        | Hold `Win + Ctrl + Right` or `Alt + Win`, speak, release          |
+| Use toggle mode           | Press the configured combination once to start, again to stop     |
+| Dictate with the mouse    | Hold **Hold** in the panel                                        |
+| Dictate several sentences | Keep `Win` + `Ctrl` pressed and tap `Right` once per sentence     |
+| Finish a long sentence    | Press **Stop** in the panel or use **Stop recording** in the tray |
+| Stop everything           | Release the keys or choose **Quit** from the tray                 |
+| Copy recognized text      | Click **Copy** in the panel or tray                               |
+| Open the panel            | Left-click the tray icon                                          |
+| Hide the panel            | Close the window                                                  |
 
-Note that this is the **interface** language only. It has nothing to do with the
-language being dictated — see [Models and languages](#models-and-languages).
+## Default Hotkeys
 
-### Dictation key
+### `Alt + Win`
 
-Click the field and press the combination you want. It is validated, saved and
-taken into use immediately. `Esc` cancels.
+Both keys must be released between sentences.
 
-Three things are refused, each with the reason shown under the field:
+### `Win + Ctrl + Right`
 
-- a main key with no modifier — hold `Ctrl`, then press `F5`;
-- modifiers and nothing else — press `Ctrl + Shift`, let go, and it says a normal
-  key is needed as well. A combination has to end on a key that is not a
-  modifier, because that is the key the hook blocks and the key whose release
-  ends a held recording;
-- a key that cannot be named, such as a media or browser key.
+The arrow key completes the combination.
 
-While the capture is live the hook swallows **every** keystroke in the system, so
-`Win` cannot open the Start menu and `Win + D` cannot minimise everything. That is
-deliberate — it is the only way `Win` itself can be recorded — but it means the
-keyboard is inert for those few seconds. `Esc` ends it; quitting the app ends it
-too.
+This lets you keep `Win` and `Ctrl` pressed while tapping `Right` once for each sentence.
 
-**Сбросить** forgets your combination and brings back the two shipped defaults.
+## Recording Indicator
 
-A combination you wrote into `settings.json` by hand and got wrong is not
-taken out quietly either: the broken entry is dropped, the ones that work stay in
-effect, and the panel and the tray name what was dropped and why. The Menu key is
-accepted as `menu`, `apps` or `context_menu`, so a typo in the key's name is not
-what makes a combination unusable.
+While recording, WinVosk displays a small dark chip in the center of the screen.
 
-Escape is reserved as the cancel key, so it can never become the main key of a
-recorded combination.
+It shows:
 
-### What gets blocked
+* eleven animated bars;
+* elapsed recording time.
 
-Taking the shortcut away from Windows **is what the hotkey does**. While WinVosk
-is running, your combination does not reach the system, so `Ctrl + Menu` cannot
-open a context menu behind a recording and `Win + Ctrl + →` cannot switch
-desktops.
+The chip does not take keyboard focus.
 
-Only the **last** key of your combination is taken, and only while you are holding
-it. The modifiers always reach Windows on purpose — blocking one would leave it
-stuck down and break typing everywhere else. So a plain `Menu` with no Ctrl still
-opens the menu as usual.
+<img src="docs/img/chip.gif" width="348" alt="WinVosk recording indicator">
 
-Windows repeats a key you hold, and the repeats are swallowed too. That matters
-more than it sounds: push to talk means holding the keys for a whole sentence, and
-an earlier version let the repeats through. The application never saw the first
-press, so a repeat arriving on its own opened the menu anyway.
+---
 
-Two things no hotkey can take back: a combination made **only** of modifiers,
-such as a bare `Win`, which has no last key to block — the capture refuses it and
-tells you why; and `Ctrl + Alt + Del`, which Windows routes past every user-mode
-hook by design.
+# Recording Modes
 
-### Checking it yourself
+The default mode is **Hold**.
+
+| Behavior                | Hold                 | Toggle    |
+| ----------------------- | -------------------- | --------- |
+| First press             | Start                | Start     |
+| Release                 | Stop                 | Ignored   |
+| Second press            | Start a new sentence | Stop      |
+| Panel **Stop**          | Stop                 | Stop      |
+| Tray **Stop recording** | Stop                 | Stop      |
+| Maximum session         | 3 minutes            | 3 minutes |
+
+### Hold mode
+
+Recording lasts exactly as long as the hotkey is held.
+
+When the keys are released:
+
+1. the recording ends;
+2. the recognized text is finalized;
+3. the text is typed into the active window;
+4. the session is written to `logs\YYYY-MM-DD.txt`.
+
+### Toggle mode
+
+Enable:
+
+```text
+Settings → Toggle recording
+```
+
+The first press starts recording. The next press stops it.
+
+The keys themselves are ignored while the session is running.
+
+Because a second press may never arrive, the following stop mechanisms remain available:
+
+* **Stop** in the panel;
+* **Stop recording** in the tray;
+* the three-minute session limit.
+
+A session can never record indefinitely.
+
+---
+
+# The Panel and Tray
+
+WinVosk has two panel tabs.
+
+## Dictation
+
+The **Dictation** tab contains:
+
+* live recognized text;
+* model name;
+* **Hold** button;
+* **Stop**;
+* **Copy**;
+* **Clear**;
+* active hotkey.
+
+<img src="docs/img/panel-ru.png" width="46%" alt="WinVosk panel in Russian">
+
+<img src="docs/img/panel-en.png" width="46%" alt="WinVosk panel in English">
+
+## Settings
+
+The **Settings** tab contains all user-configurable options.
+
+Changes are saved immediately and take effect without restarting the application.
+
+If a setting cannot be saved, WinVosk restores the actual previous value and reports the reason.
+
+## Tray Menu
+
+| Action         | Result                      |
+| -------------- | --------------------------- |
+| Left click     | Open and focus the panel    |
+| Right click    | Open the tray menu          |
+| Show panel     | Open the panel              |
+| Stop recording | Stop the active session     |
+| Copy the text  | Copy the current transcript |
+| Clear          | Clear the transcript        |
+| Quit           | Exit WinVosk                |
+
+### Important: panel focus
+
+Left-clicking the tray icon deliberately focuses the panel.
+
+If the panel remains in front while you dictate, live typing is temporarily held back instead of being sent to the underlying application.
+
+The text still appears in the panel and is written to the diary.
+
+**Close the panel before continuing to dictate into another application.**
+
+---
+
+# Settings
+
+## Text Output
+
+| Setting                              | Description                                           | Default |
+| ------------------------------------ | ----------------------------------------------------- | ------- |
+| **Type into the active window**      | Types recognized text at the active caret             | On      |
+| **Copy to the clipboard right away** | Copies each completed session to the clipboard        | Off     |
+| **Correct my own words**             | Replaces close recognition misses using `phrases.txt` | On      |
+
+### Type into the active window
+
+When disabled, WinVosk does not type into another application.
+
+Recognition still continues and the text is:
+
+* displayed in the panel;
+* written to `logs\YYYY-MM-DD.txt`;
+* available through **Copy**.
+
+### Copy to the clipboard right away
+
+When enabled, each completed session overwrites the clipboard.
+
+Leave it disabled unless another part of your workflow needs automatic clipboard output.
+
+Text insertion itself still uses keyboard input rather than the clipboard.
+
+### Correct my own words
+
+WinVosk compares completed phrases against your entries in `phrases.txt`.
+
+Corrections happen **after** recognition has finished.
+
+Every replacement is logged to:
+
+```text
+logs\app.log
+```
+
+---
+
+# Language
+
+The interface supports:
+
+* Russian;
+* English.
+
+Change it under:
+
+```text
+Settings → Language
+```
+
+The interface updates immediately without restarting and without losing:
+
+* the current transcript;
+* recording state;
+* switch states.
+
+The selected UI language is stored in:
+
+```text
+settings.json
+```
+
+### UI language vs. speech language
+
+These are independent.
+
+Changing the interface to English does **not** change the speech model.
+
+The speech language is determined by the model installed in `models\`.
+
+---
+
+# Dictation Hotkeys
+
+Click the hotkey field and press the desired combination.
+
+Press:
+
+```text
+Esc
+```
+
+to cancel capture.
+
+WinVosk rejects:
+
+* a main key without a modifier;
+* modifiers without a normal key;
+* keys that cannot be represented by the application.
+
+For example:
+
+```text
+Ctrl + F5
+```
+
+is valid.
+
+But:
+
+```text
+Ctrl + Shift
+```
+
+is not, because a normal key is required.
+
+`Esc` is reserved as the cancel key.
+
+## What the Hook Blocks
+
+While a hotkey is captured, WinVosk blocks the **last key** in the configured combination.
+
+The modifiers continue reaching Windows.
+
+For example:
+
+```text
+Win + Ctrl + Right
+```
+
+blocks:
+
+```text
+Right
+```
+
+while the modifiers remain available to Windows.
+
+This prevents modifier keys from becoming stuck.
+
+Windows key repeats are swallowed as well.
+
+Two cases cannot be captured:
+
+* modifier-only combinations such as a bare `Win`;
+* `Ctrl + Alt + Del`, which Windows routes outside normal user-mode keyboard hooks.
+
+## Probe a Hotkey
+
+With WinVosk closed:
 
 ```powershell
 .\.venv\Scripts\python.exe .\tools\hook_probe.py --specs ctrl+menu 20
 ```
 
-Run it with WinVosk closed, press the combination, and every key is printed as
-the hook decides it: `BLOCKED` was taken, `passed` reached Windows. If a context
-menu appears, the line above it names the key that got through.
+The probe prints whether each key was:
 
-### Where the settings live
+```text
+BLOCKED
+```
 
-`settings.json`, next to the exe (or in the checkout root):
+or:
+
+```text
+passed
+```
+
+---
+
+# Configuration File
+
+WinVosk stores settings in:
+
+```text
+settings.json
+```
+
+Example:
 
 ```json
 {
@@ -337,433 +516,955 @@ menu appears, the line above it names the key that got through.
 }
 ```
 
-Nothing in that file can stop the app from starting. A missing, malformed or
-wrongly shaped file costs one line in `logs\app.log` and the defaults are used;
-a byte order mark (Notepad and PowerShell both add one) is read correctly; a
-combination that cannot be parsed costs only itself rather than crashing under
-`pythonw.exe` where nobody would see the traceback. **Сбросить** and
-deleting the file both restore the defaults.
+Malformed settings do not prevent startup.
 
-### Settings that are not switches
+If the file is:
 
-These live in `src\winvosk\config.py` and need an editor:
+* missing;
+* malformed;
+* incorrectly structured;
 
-| Constant | Meaning |
-| --- | --- |
-| `MODEL_NAME` | the preferred model directory |
-| `MIC_DEVICE` | PortAudio input index; `None` for the system default |
-| `TYPE_DELAY` | pause after each revision, in seconds — raise it if a target application cannot keep up |
-| `MAX_SESSION_SECONDS` | ceiling on one session; rare while holding, load-bearing in toggle mode |
-| `SHOW_WORDS` | log word timings instead of just the text |
+WinVosk logs the issue and uses defaults.
+
+A malformed hotkey affects only that hotkey rather than crashing the application.
+
+**Reset** and deleting `settings.json` restore the defaults.
 
 ---
 
-## Custom vocabulary (`phrases.txt`)
+# Advanced Configuration
 
-`phrases.txt`, next to the exe, is your own word list. One word or phrase per
-line, no punctuation, `#` starts a comment:
+These values live in:
 
+```text
+src\winvosk\config.py
 ```
+
+| Constant              | Purpose                                                      |
+| --------------------- | ------------------------------------------------------------ |
+| `MODEL_NAME`          | Preferred model directory                                    |
+| `MIC_DEVICE`          | PortAudio input device index; `None` uses the system default |
+| `TYPE_DELAY`          | Delay after each text revision                               |
+| `MAX_SESSION_SECONDS` | Maximum recording duration                                   |
+| `SHOW_WORDS`          | Log word timings instead of text only                        |
+
+Increase `TYPE_DELAY` if the target application cannot keep up with rapid Unicode input.
+
+---
+
+# Custom Vocabulary (`phrases.txt`)
+
+Create:
+
+```text
+phrases.txt
+```
+
+next to `WinVosk.exe`.
+
+Use one word or phrase per line.
+
+```text
 телеграм
 фейсбук
 дропбокс
 проверка связи
 ```
 
-The file is yours, so it is not in the repository and not in the release archive.
-What ships instead is `phrases.example.txt`, the same commented template;
-copying it to `phrases.txt` is the first thing to do.
+Use `#` for comments.
 
-It does two jobs, and they are worth separating because they answer different
-questions.
+The release contains:
 
-### 1. Which of your words can the model hear?
-
-Press **Проверить свои слова** under **Исправлять свои слова** in
-**Настройки**. A window opens listing every phrase with a verdict:
-
+```text
+phrases.example.txt
 ```
+
+Copy it to:
+
+```text
+phrases.txt
+```
+
+and edit the copy.
+
+The personal vocabulary file is not included in the repository or release archive.
+
+---
+
+# How Custom Vocabulary Works
+
+The vocabulary system solves two different problems.
+
+## 1. Is the word in the model?
+
+Open:
+
+```text
+Settings → Correct my own words → Check my own words
+```
+
+WinVosk checks whether the model contains each phrase.
+
+Example:
+
+```text
 phrases file: D:\AI\Vosk\phrases.txt  (7 phrase(s))
-heard by the model : 6
+heard by the model : 7
   ok      телеграм
   ok      фейсбук
   ok      дропбокс
-  MISSING йоцунфэнь
-unknown to the model: 1
+  ok      эмодзи
+  ok      йоцунфэнь
+  ok      востоков
+  ok      проверка связи
+unknown to the model: 0
 ```
 
-It takes about a second. The same check from a shell, if you prefer:
+From PowerShell:
 
 ```powershell
 .\.venv\Scripts\python.exe .\src\run.py --vocab-check
 ```
 
-**ok** means the word is in the model's vocabulary. **MISSING** means it is not,
-and no amount of configuration will change that at run time — see
-[If it recognises badly](#if-it-recognises-badly).
+### `ok`
 
-The check builds a throwaway recogniser from your phrases and reads vosk's own
-log, which lists every word it has to ignore. The model's vocabulary lives inside
-the compiled decoding graph, so there is no word list on disk to read; vosk tells
-us instead.
+The model contains the word.
 
-### 2. Which of your words does it hear *wrong*?
+### `MISSING`
 
-**ok** does not mean the word comes out right. The model knows «дропбокс» and
-still prefers a different word for the same sound. That is an ambiguity, not a
-gap, and it is fixed **after** the decode rather than inside it:
+The model does not contain it.
 
-| It heard | You get | Why |
-| --- | --- | --- |
-| `дропбок` | `дропбокс` | a dropped letter, 0.93 similar |
-| `топбокс` | `дропбокс` | a wrong consonant, 0.80 similar |
-| `друг бокс` | `дропбокс` | split across a space, glued back first |
-| `дропбокс` | unchanged | exact |
-| `дропбоксы` | unchanged | an inflection of your own word, not a mistake |
-| `бокс друг` | unchanged | the glue only runs forwards |
-| `молоко` | unchanged | nothing near the list |
-
-Rules worth knowing before you fill the file in:
-
-- **Words shorter than four letters are never touched.** A wrong correction on a
-  short word is easy to miss and annoying to find.
-- **Anything more than about 0.75 similar is left alone.** That is what keeps
-  «подбоксник» and «дропбоксник» intact next to «дропбокс».
-- **Add the forms you actually say.** Russian inflects heavily: add `дропбоксы`
-  and `фейсбука` as their own lines rather than expecting one entry to cover them.
-- **Only finished phrases are corrected**, never the half-heard text, so the
-  screen does not jump around for words the model has not settled on.
-- **Every replacement is logged**: `corrected 1 word(s): дропбок -> дропбокс` in
-  `logs\app.log`. If the list is getting in the way, that line is where you will
-  see it.
-
-Measured on the machine this was written on: against 500 random words the false
-replacement rate is about 0.03 %, and over 138 neighbouring word pairs in a real
-diary nothing was changed at all.
-
-### Words marked MISSING
-
-A word the model has never heard cannot be added at run time. Doing it properly
-means rebuilding the language model: download the `*-compile` variant of the
-model, put the words in `db/extra.txt`, and regenerate `graph/Gr.fst` and
-`graph/HCLr.fst` with `compile-graph.sh`. That needs a Kaldi build with `irstlm`,
-`opengrm`, `srilm` and `phonetisaurus`, and the guides for it target Ubuntu. It
-is not something this app can do on Windows on demand.
-
-Practical answers while that is out of reach, in the order worth trying:
-
-1. **Rewrite the word** so it sounds like something the model knows — «фейсбук»
-   instead of «фейсбук мессенджер».
-2. **Try a bigger model.** See [Models and languages](#models-and-languages).
-3. **Leave it.** Recognised forms show in the panel and in
-   `logs\YYYY-MM-DD.txt`, so it is always visible what it actually heard.
+A runtime configuration change cannot add a missing word to Vosk's decoding graph.
 
 ---
 
-## If it recognises badly
+## 2. Does the model hear the word correctly?
 
-Work down this list; it is ordered by how often each cause turns out to be the
-real one.
+A model can know a word and still prefer another word with similar audio.
 
-### Nothing is typed at all
+WinVosk corrects these cases **after decoding**.
 
-1. **The panel is in front.** If any window of this app is in front while a
-   recording is live, live typing is held back on purpose. Close the panel.
-2. **The app is not running.** Look for the tray icon; a second launch does
-   nothing at all, because only one instance is allowed.
-3. **The combination did not change.** Only the main key is blocked, so
-   `Win + Ctrl + Right` works but a combination Windows acts on through its
-   modifiers alone — a bare `Win`, for instance — cannot be neutralised and will
-   never reach the app.
-4. **The Windows Search panel is open.** It holds the foreground and refuses to
-   give it up. Press `Esc` first.
+| Recognized  | Final text  | Reason                        |
+| ----------- | ----------- | ----------------------------- |
+| `дропбок`   | `дропбокс`  | Dropped letter                |
+| `топбокс`   | `дропбокс`  | Similar consonant pattern     |
+| `друг бокс` | `дропбокс`  | Split across a space          |
+| `дропбокс`  | `дропбокс`  | Exact match                   |
+| `дропбоксы` | `дропбоксы` | Inflected form                |
+| `бокс друг` | `бокс друг` | Correction only works forward |
+| `молоко`    | `молоко`    | No relevant match             |
 
-### It types, but the wrong words
+### Correction rules
 
-1. **It is not your terminology.** That is what `phrases.txt` is for. Add the
-   words, press **Проверить свои слова**, read the verdict.
-2. **The small model.** `vosk-model-small-ru-0.22` is 44 MB and noticeably weaker
-   on noisy or telephone audio. A bigger model in `models\` fixes most of it.
-3. **It is genuinely noisy.** The chip animates for anything above a gate, so a
-   quiet speaker and a silent microphone look the same on it. Check with
-   `--diagnose` (`records from`), not with the chip.
-4. **You are holding too long.** The model revises an open utterance, and the
-   more it has to reconsider, the more the text jumps. Let go between sentences.
+* Words shorter than four letters are never corrected.
+* Similarity above roughly `0.75` is left alone.
+* Add the inflected forms you actually use.
+* Corrections apply only to completed phrases.
+* Every replacement is logged.
 
-### Words run together or the punctuation is wrong
+Example log entry:
 
-Expected. Vosk emits a stream of lowercase words with no punctuation and no
-capitalisation. A space is added after each finished utterance so words do not
-run together, but nothing else is added. Type your own capitals and punctuation
-afterwards, or dictate a line at a time.
+```text
+corrected 1 word(s): дропбок -> дропбокс
+```
 
-### Recognised words are wrong in a way that looks like a bug
+The implementation was measured against 500 random words with an observed false replacement rate of about `0.03%`; testing against 138 neighboring word pairs produced no changes.
 
-Two known shapes, both upstream behaviour rather than a fault here:
+---
 
-- **A word split in two**: «друг бокс» instead of «дропбокс». The corrector glues
-  neighbouring tokens and compares the pair, which fixes this. A word split into
-  *three* tokens is out of reach — «йо цун фэнь» comes out as «йо цунфэнь».
-- **The same audio gives a different result twice.** Free decoding is a search,
-  not a lookup; the acoustic score of two similar words is close.
+# Missing Words
 
-### The microphone is not the one I want
+A `MISSING` word cannot be added at runtime.
+
+Properly adding it requires rebuilding the language model:
+
+1. Download the `*-compile` model variant.
+2. Add the words to `db/extra.txt`.
+3. Regenerate:
+
+   * `graph/Gr.fst`
+   * `graph/HCLr.fst`
+4. Build the required Kaldi tooling.
+
+The upstream process requires a Linux-oriented toolchain involving:
+
+```text
+Kaldi
+irstlm
+opengrm
+srilm
+phonetisaurus
+```
+
+This is not a Windows runtime operation.
+
+### Practical alternatives
+
+If a word is missing:
+
+1. Rewrite it so it resembles vocabulary the model already knows.
+2. Try a larger speech model.
+3. Accept the recognized form and review it in the panel or daily log.
+
+---
+
+# Troubleshooting Recognition
+
+Work through these cases in order.
+
+## Nothing is Typed
+
+### 1. The panel is in front
+
+Close the WinVosk panel.
+
+Live typing is intentionally held back while the application's panel has focus.
+
+### 2. WinVosk is not running
+
+Check the system tray.
+
+WinVosk allows only one running instance. Launching it again does nothing.
+
+### 3. The hotkey cannot be intercepted
+
+Only the final key in a combination is blocked.
+
+Modifier-only combinations such as a bare `Win` cannot be neutralized.
+
+### 4. Windows Search has focus
+
+Press:
+
+```text
+Esc
+```
+
+then try again.
+
+---
+
+## It Types the Wrong Words
+
+### 1. Your terminology is missing
+
+Add the words to:
+
+```text
+phrases.txt
+```
+
+Then run:
+
+```powershell
+.\.venv\Scripts\python.exe .\src\run.py --vocab-check
+```
+
+### 2. The model is too small
+
+The bundled Russian model:
+
+```text
+vosk-model-small-ru-0.22
+```
+
+is 44 MB.
+
+A larger model can improve recognition, particularly with clean speech and broader vocabulary.
+
+### 3. The audio is noisy
+
+The recording chip indicates activity above a threshold, not speech quality.
+
+Use:
 
 ```powershell
 .\.venv\Scripts\python.exe .\src\run.py --diagnose
 ```
 
-Read two lines:
+to inspect the actual recording environment.
 
-- `records from` — the device a recording will actually open. PortAudio's own
-  default can name no device at all on some machines, in which case the app
-  resolves the index from the host API instead. This line is the truth.
-- `input devices:` — every device PortAudio can see, with its channel count and
-  its **native** sample rate.
+### 4. The sentence is too long
 
-That last part matters: a device that only accepts 44100 Hz cannot record at the
-16000 Hz the decoder wants, and PortAudio refuses the stream outright
-(`Invalid device`). There is no setting that fixes that — it is a property of the
-driver. Check the native rate before blaming the app.
+Vosk continuously revises an open utterance.
+
+Longer sessions can cause more visible text changes.
+
+For more stable output, release the hotkey between sentences.
 
 ---
 
-## Models and languages
+# Punctuation and Capitalization
 
-WinVosk ships with **Russian** (`vosk-model-small-ru-0.22`, 44 MB). Vosk
-publishes models for **32 languages**, and any of them can be dropped into
-`models\` — the app finds it by itself, no configuration and no code change.
+Vosk outputs lowercase words without punctuation or capitalization.
 
-### How to install another one
+WinVosk adds a space after each completed utterance.
 
-1. Pick a model from the table below.
-2. Download it from the **Hugging Face mirror** — the official host
-   `alphacephei.com` throttles large files to unusable speed on many networks:
+It does **not** automatically add:
 
-   ```
-   https://huggingface.co/rhasspy/vosk-models/resolve/main/<code>/<model>.zip
-   ```
+* commas;
+* periods;
+* capitalization;
+* other punctuation.
 
-   For example English, the small one:
-
-   ```powershell
-   curl.exe -L -o .\tmp\en.zip https://huggingface.co/rhasspy/vosk-models/resolve/main/en/vosk-model-small-en-us-0.15.zip
-   Expand-Archive .\tmp\en.zip .\models -Force
-   ```
-
-3. Restart the app.
-
-**Keep exactly one model in `models\`.** If several are there, the shipped
-Russian one wins; to dictate in another language, delete or rename the Russian
-folder first. This is deliberate: the shipped setup must never change under you.
-
-Confirm what was picked up with `--diagnose`, whose `model` line is the truth.
-
-### The list
-
-Main languages first. Sizes are the download (`.zip`), not the unpacked model.
-
-**Main**
-
-| Language | Code | Model | Zip |
-| --- | --- | --- | --- |
-| Russian | `ru` | `vosk-model-small-ru-0.22` | 44 MB |
-| English | `en` | `vosk-model-small-en-us-0.15` | 39 MB |
-| English, large | `en` | `vosk-model-en-us-0.22-lgraph` | 125 MB |
-| Ukrainian | `uk` | `vosk-model-small-uk-v3-small` | 137 MB |
-| German | `de` | `vosk-model-small-de-0.15` | 44 MB |
-| French | `fr` | `vosk-model-small-fr-0.22` | 40 MB |
-| Spanish | `es` | `vosk-model-small-es-0.42` | 38 MB |
-| Italian | `it` | `vosk-model-small-it-0.22` | 47 MB |
-| Portuguese | `pt` | `vosk-model-small-pt-0.3` | 31 MB |
-
-**Also widely spoken**
-
-| Language | Code | Model | Zip |
-| --- | --- | --- | --- |
-| Polish | `pl` | `vosk-model-small-pl-0.22` | 51 MB |
-| Turkish | `tr` | `vosk-model-small-tr-0.3` | 35 MB |
-| Dutch | `nl` | `vosk-model-small-nl-0.22` | 39 MB |
-| Dutch, large | `nl` | `vosk-model-nl-spraakherkenning-0.6-lgraph` | 101 MB |
-| Czech | `cs` | `vosk-model-small-cs-0.4-rhasspy` | 44 MB |
-| Swedish | `sv` | `vosk-model-sv-rhasspy-0.15` | 290 MB |
-| Uzbek | `uz` | `vosk-model-small-uz-0.22` | 49 MB |
-| Persian | `fa` | `vosk-model-small-fa-0.5` | 59 MB |
-| Arabic | `ar` | `vosk-model-ar-mgb2-0.4` | 318 MB |
-| Vietnamese | `vi` | `vosk-model-small-vn-0.4` | 32 MB |
-| Vietnamese | `vi` | `vosk-model-vn-0.4` | 71 MB |
-
-**The rest**
-
-| Language | Code | Model | Zip |
-| --- | --- | --- | --- |
-| Chinese | `zh` | `vosk-model-small-cn-0.22` | 42 MB |
-| Japanese | `ja` | `vosk-model-small-ja-0.22` | 47 MB |
-| Korean | `ko` | `vosk-model-small-ko-0.22` | 83 MB |
-| Hindi | `hi` | `vosk-model-small-hi-0.22` | 42 MB |
-| Catalan | `ca` | `vosk-model-small-ca-0.4` | 41 MB |
-| Esperanto | `eo` | `vosk-model-small-eo-0.42` | 42 MB |
-| Breton | `br` | `vosk-model-br-0.8` | 78 MB |
-| Tagalog | `tl` | `vosk-model-tl-ph-generic-0.6` | 314 MB |
-| Greek | `el` | `vosk-model-el-gr-0.7` | 1.1 GB, big only |
-| Kazakh | `kz` | `vosk-model-small-kz-0.42` | 58 MB |
-| Kazakh, large | `kz` | `vosk-model-kz-0.42` | 1.3 GB |
-| Gujarati | `gu` | `vosk-model-small-gu-0.42` | 100 MB |
-| Gujarati, large | `gu` | `vosk-model-gu-0.42` | 700 MB |
-| Tajik | `tg` | `vosk-model-small-tg-0.22` | 50 MB |
-| Tajik, large | `tg` | `vosk-model-tg-0.22` | 327 MB |
-| Telugu | `te` | `vosk-model-small-te-0.42` | 58 MB |
-| Kyrgyz | `ky` | `vosk-model-small-ky-0.42` | 49 MB |
-| Kyrgyz, large | `ky` | `vosk-model-ky-0.42` | 1.1 GB |
-| Georgian | `ka` | `vosk-model-small-ka-0.42` | 45 MB |
-| Georgian, large | `ka` | `vosk-model-ka-0.42` | 700 MB |
-
-Notes:
-
-- **`small` vs `lgraph`.** A `lgraph` model replaces the static grammar with a
-  dynamic one: much better accuracy, several times the RAM and a slower start.
-  Both are listed above where Vosk publishes both; the large one is usually worth
-  it on a machine with 8 GB or more.
-- **A model decides the language, not the interface.** The panel and the tray are
-  Russian or English either way — see
-  [Language](#language) in the settings section.
-- **Your word list follows the model.** `phrases.txt` is a list of words *in the
-  language being dictated*. An English model with a Russian word list will simply
-  find nothing to correct.
-- **A bigger model is not automatically better on a noisy microphone.** It is
-  slower and it holds more RAM; the gain is in vocabulary and accuracy on clean
-  speech.
-- **No Belarusian, Serbian, Croatian, Slovak, Hebrew or Thai models exist** in
-  the Vosk model set. `be`, `sr`, `hr`, `sk`, `he`, `th` are simply not there —
-  a limitation of the upstream models, not of this app.
+For clean output, dictate one line at a time and add punctuation afterwards.
 
 ---
 
-## What it deliberately does not do
+# Known Recognition Behaviors
 
-- **Your hotkey takes its combination away from Windows while the app
-  runs.** That is the point: it is what stops the shortcut from firing behind
-  WinVosk. Only the last key is taken — the modifiers always reach Windows, so
-  they can never be left stuck down.
-- **No punctuation or capitals.** See
-  [Words run together](#words-run-together-or-the-punctuation-is-wrong).
-- **No speaker diarisation.** One voice, one stream.
-- **No phrase list fed to the decoder.** Passing your words to the recogniser as
-  a grammar is a *hard* restriction, not a bias: measured here, the same audio
-  that yields a full sentence in free decoding yields the **empty string** with a
-  three phrase grammar. That is why correction happens after the decode.
-- **No clipboard insertion.** Ever. Text is typed as keystrokes.
-- **No background booster.** Vosk 0.3.45 has no word boosting — `SetWords` is a
-  boolean for word timestamps, and the full C API has no boosting call — so an
-  own-word correction has to happen after the decode.
-- **No streaming to a server.** The app opens a microphone and decodes locally.
-  Nothing is uploaded, because there is no upload path in it.
+## A word split into two tokens
 
----
+WinVosk can join neighboring tokens when the combined form matches an entry in `phrases.txt`.
 
-## Files and folders
+For example:
 
-| Path | What it is | Safe to delete? |
-| --- | --- | --- |
-| `WinVosk.exe` | the application | no |
-| `_internal\` | Python, Tcl/Tk, the Kaldi decoder, PortAudio, Pillow | no |
-| `models\<model>\` | the speech model | yes — put another one back |
-| `logs\app.log` | diagnostics, rotated at 2 MB × 3 | yes |
-| `logs\YYYY-MM-DD.txt` | the dictation diary, one file per day | yes, it is only a copy |
-| `phrases.txt` | your own word list | yes — copy `phrases.example.txt` over it |
-| `settings.json` | your settings | yes — costs the defaults only |
+```text
+друг бокс
+```
 
-There are no absolute paths anywhere in the tree, so the folder can live
-anywhere. The app finds itself through `__file__` in the source checkout and
-through the exe's own folder once it is built.
+can become:
 
-### The diary
+```text
+дропбокс
+```
 
-Every finished session is appended to `logs\YYYY-MM-DD.txt` in UTF-8, whether or
-not anything was typed. It is a plain text file — open it in Notepad. It is not
-required by anything and can be deleted freely.
+A word split into three tokens is outside the current correction logic.
+
+## The same audio produces different results
+
+Free decoding is a search process rather than a deterministic dictionary lookup.
+
+Two acoustically similar words can have close scores, so repeated recognition of the same audio can produce different results.
 
 ---
 
-## When something goes wrong
+# Microphone Problems
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe .\src\run.py --diagnose
+```
+
+Look for:
+
+```text
+records from
+```
+
+This is the device WinVosk will actually open.
+
+Then inspect:
+
+```text
+input devices:
+```
+
+This lists devices visible through PortAudio, including:
+
+* channel count;
+* native sample rate.
+
+The decoder expects 16 kHz input.
+
+If a device only supports 44.1 kHz, PortAudio can reject the stream with:
+
+```text
+Invalid device
+```
+
+That is a driver/device capability issue, not a configurable WinVosk setting.
+
+---
+
+# Models and Languages
+
+WinVosk ships with:
+
+```text
+vosk-model-small-ru-0.22
+```
+
+The bundled Russian model is 44 MB.
+
+Vosk publishes models for 32 languages. A model can be placed into:
+
+```text
+models\
+```
+
+and WinVosk will discover it automatically.
+
+No code or configuration change is required.
+
+---
+
+# Installing Another Model
+
+## 1. Choose a model
+
+Select a model from the tables below.
+
+## 2. Download it
+
+The project uses the Hugging Face mirror for large downloads:
+
+```text
+https://huggingface.co/rhasspy/vosk-models/resolve/main/<code>/<model>.zip
+```
+
+Example:
+
+```powershell
+curl.exe -L -o .\tmp\en.zip https://huggingface.co/rhasspy/vosk-models/resolve/main/en/vosk-model-small-en-us-0.15.zip
+Expand-Archive .\tmp\en.zip .\models -Force
+```
+
+## 3. Keep one model installed
+
+Keep exactly **one** model directory in `models\`.
+
+If the Russian model remains alongside another model, the shipped Russian model wins.
+
+To switch languages:
+
+1. remove or rename the current model directory;
+2. place the desired model in `models\`;
+3. restart WinVosk.
+
+Confirm the selected model with:
 
 ```powershell
 .\WinVosk.exe --diagnose
 ```
 
-The report covers the version, the resolved folder, the model, the autostart
-state, the hotkeys actually in effect, every switch, the settings file, the
-typing delay, the session limit, the log path, the device the microphone will
-open, and every input device PortAudio can see.
+The `model` line is authoritative.
 
-Two lines are worth reading twice:
+---
 
-- `base dir` — the folder the app resolved. It must be the folder the exe is in.
-  If it is not, everything else on the report is about a different installation.
-- `records from` — the device a recording will actually use.
+## Supported Models
 
-A windowless build cannot print, so the same report is written to
-`logs\report.txt` and shown in a message box.
+### Main Languages
 
-**The log is the diagnostic.** `logs\app.log` records every session, every
-setting change, every hotkey change and every correction:
+| Language       | Code | Model                          |    ZIP |
+| -------------- | ---- | ------------------------------ | -----: |
+| Russian        | `ru` | `vosk-model-small-ru-0.22`     |  44 MB |
+| English        | `en` | `vosk-model-small-en-us-0.15`  |  39 MB |
+| English, large | `en` | `vosk-model-en-us-0.22-lgraph` | 125 MB |
+| Ukrainian      | `uk` | `vosk-model-small-uk-v3-small` | 137 MB |
+| German         | `de` | `vosk-model-small-de-0.15`     |  44 MB |
+| French         | `fr` | `vosk-model-small-fr-0.22`     |  40 MB |
+| Spanish        | `es` | `vosk-model-small-es-0.42`     |  38 MB |
+| Italian        | `it` | `vosk-model-small-it-0.22`     |  47 MB |
+| Portuguese     | `pt` | `vosk-model-small-pt-0.3`      |  31 MB |
+
+### Also Widely Spoken
+
+| Language     | Code | Model                                       |    ZIP |
+| ------------ | ---- | ------------------------------------------- | -----: |
+| Polish       | `pl` | `vosk-model-small-pl-0.22`                  |  51 MB |
+| Turkish      | `tr` | `vosk-model-small-tr-0.3`                   |  35 MB |
+| Dutch        | `nl` | `vosk-model-small-nl-0.22`                  |  39 MB |
+| Dutch, large | `nl` | `vosk-model-nl-spraakherkenning-0.6-lgraph` | 101 MB |
+| Czech        | `cs` | `vosk-model-small-cs-0.4-rhasspy`           |  44 MB |
+| Swedish      | `sv` | `vosk-model-sv-rhasspy-0.15`                | 290 MB |
+| Uzbek        | `uz` | `vosk-model-small-uz-0.22`                  |  49 MB |
+| Persian      | `fa` | `vosk-model-small-fa-0.5`                   |  59 MB |
+| Arabic       | `ar` | `vosk-model-ar-mgb2-0.4`                    | 318 MB |
+| Vietnamese   | `vi` | `vosk-model-small-vn-0.4`                   |  32 MB |
+| Vietnamese   | `vi` | `vosk-model-vn-0.4`                         |  71 MB |
+
+### Other Available Models
+
+| Language        | Code | Model                          |    ZIP |
+| --------------- | ---- | ------------------------------ | -----: |
+| Chinese         | `zh` | `vosk-model-small-cn-0.22`     |  42 MB |
+| Japanese        | `ja` | `vosk-model-small-ja-0.22`     |  47 MB |
+| Korean          | `ko` | `vosk-model-small-ko-0.22`     |  83 MB |
+| Hindi           | `hi` | `vosk-model-small-hi-0.22`     |  42 MB |
+| Catalan         | `ca` | `vosk-model-small-ca-0.4`      |  41 MB |
+| Esperanto       | `eo` | `vosk-model-small-eo-0.42`     |  42 MB |
+| Breton          | `br` | `vosk-model-br-0.8`            |  78 MB |
+| Tagalog         | `tl` | `vosk-model-tl-ph-generic-0.6` | 314 MB |
+| Greek           | `el` | `vosk-model-el-gr-0.7`         | 1.1 GB |
+| Kazakh          | `kz` | `vosk-model-small-kz-0.42`     |  58 MB |
+| Kazakh, large   | `kz` | `vosk-model-kz-0.42`           | 1.3 GB |
+| Gujarati        | `gu` | `vosk-model-small-gu-0.42`     | 100 MB |
+| Gujarati, large | `gu` | `vosk-model-gu-0.42`           | 700 MB |
+| Tajik           | `tg` | `vosk-model-small-tg-0.22`     |  50 MB |
+| Tajik, large    | `tg` | `vosk-model-tg-0.22`           | 327 MB |
+| Telugu          | `te` | `vosk-model-small-te-0.42`     |  58 MB |
+| Kyrgyz          | `ky` | `vosk-model-small-ky-0.42`     |  49 MB |
+| Kyrgyz, large   | `ky` | `vosk-model-ky-0.42`           | 1.1 GB |
+| Georgian        | `ka` | `vosk-model-small-ka-0.42`     |  45 MB |
+| Georgian, large | `ka` | `vosk-model-ka-0.42`           | 700 MB |
+
+## Model Selection Notes
+
+### Small vs. large
+
+`lgraph` models use a dynamic grammar instead of the static grammar used by smaller models.
+
+They generally provide:
+
+* larger vocabulary;
+* better recognition accuracy;
+* higher RAM usage;
+* slower startup.
+
+On a machine with 8 GB RAM or more, the larger model can be a practical choice.
+
+### Model language vs. UI language
+
+The model controls speech recognition.
+
+The UI language controls only:
+
+* panel text;
+* tray menu;
+* notifications;
+* reports.
+
+### Vocabulary language
+
+`phrases.txt` must contain words in the language being dictated.
+
+For example, an English model will not use a Russian vocabulary list to correct English recognition.
+
+### Large does not mean universally better
+
+A larger model consumes more memory and starts more slowly.
+
+Its benefits are primarily vocabulary and recognition accuracy on clean speech.
+
+### Upstream model limitations
+
+The available Vosk model set does not include:
+
+```text
+Belarusian
+Serbian
+Croatian
+Slovak
+Hebrew
+Thai
+```
+
+---
+
+# What WinVosk Does Not Do
+
+WinVosk intentionally keeps its scope narrow.
+
+### No cloud processing
+
+Speech is decoded locally.
+
+There is no upload path.
+
+### No punctuation or capitalization
+
+The recognizer outputs lowercase words without punctuation.
+
+### No speaker diarization
+
+WinVosk handles one voice stream.
+
+### No decoder grammar for custom vocabulary
+
+`phrases.txt` is not injected as a hard decoder grammar.
+
+A grammar would restrict recognition rather than simply biasing it. Testing showed that an audio sample producing a complete sentence in free decoding could produce an empty string when restricted to a three-phrase grammar.
+
+Corrections therefore happen after decoding.
+
+### No clipboard-based text insertion
+
+The application types text as Unicode keyboard input.
+
+The clipboard is only used when the user explicitly enables clipboard copying or presses **Copy**.
+
+### No word boosting
+
+Vosk `0.3.45` does not provide a word-boosting API.
+
+`SetWords` controls word timestamps rather than recognition boosting.
+
+Custom-word correction therefore happens after decoding.
+
+### No background server
+
+There is no streaming endpoint or server-side recognition component.
+
+---
+
+# Files and Folders
+
+| Path                  | Purpose                                  | Safe to delete?                  |
+| --------------------- | ---------------------------------------- | -------------------------------- |
+| `WinVosk.exe`         | Application                              | No                               |
+| `_internal\`          | Python, Tcl/Tk, Kaldi, PortAudio, Pillow | No                               |
+| `models\<model>\`     | Speech model                             | Yes — replace with another model |
+| `logs\app.log`        | Runtime diagnostics                      | Yes                              |
+| `logs\YYYY-MM-DD.txt` | Daily dictation history                  | Yes                              |
+| `phrases.txt`         | Personal vocabulary                      | Yes                              |
+| `settings.json`       | User settings                            | Yes — defaults are restored      |
+
+There are no absolute paths in the project.
+
+The application resolves its resources relative to:
+
+* `__file__` in the source checkout;
+* the executable directory in the packaged build.
+
+## Dictation Diary
+
+Every completed session is appended to:
+
+```text
+logs\YYYY-MM-DD.txt
+```
+
+The file is UTF-8 plain text.
+
+It is not required for application operation and can be deleted at any time.
+
+---
+
+# Diagnostics
+
+Run:
+
+```powershell
+.\WinVosk.exe --diagnose
+```
+
+Or from the source checkout:
+
+```powershell
+.\.venv\Scripts\python.exe .\src\run.py --diagnose
+```
+
+The report includes:
+
+* WinVosk version;
+* resolved base directory;
+* active model;
+* autostart state;
+* active hotkeys;
+* settings;
+* typing delay;
+* session limit;
+* log path;
+* selected microphone;
+* available PortAudio input devices.
+
+## Two Lines Matter Most
+
+### `base dir`
+
+This must point to the directory containing the running executable.
+
+If it points somewhere unexpected, the rest of the report describes a different installation.
+
+### `records from`
+
+This is the microphone device WinVosk will actually open.
+
+## Windowless Builds
+
+A windowless executable cannot print diagnostic output to a console.
+
+The same report is therefore:
+
+```text
+logs\report.txt
+```
+
+and is displayed in a message box.
+
+## Application Log
+
+Inspect the last 40 lines:
 
 ```powershell
 Get-Content .\logs\app.log -Tail 40
 ```
 
-A healthy log has no `WARNING` and no `ERROR`. If you report a problem, the last
-30 lines of this file are the most useful thing you can attach.
+The log records:
 
-More detail on the internals, the verification probes and the design decisions is
-in [`docs/HOWTO.md`](docs/HOWTO.md).
+* recording sessions;
+* setting changes;
+* hotkey changes;
+* vocabulary corrections;
+* warnings;
+* errors.
+
+A healthy log contains no:
+
+```text
+WARNING
+ERROR
+```
+
+When reporting a problem, attach the last 30 lines of:
+
+```text
+logs\app.log
+```
+
+For deeper implementation notes and verification probes, see:
+
+[`docs/HOWTO.md`](docs/HOWTO.md)
 
 ---
 
-## Building from source
+# Building from Source
 
-Needs Python 3.14 and the five pinned packages. From the project root:
+## Requirements
+
+* Windows x64
+* Python 3.14
+* the pinned project dependencies
+
+Install the dependencies:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install vosk==0.3.45 sounddevice==0.5.6 `
-    pystray==0.19.5 Pillow==12.3.0 pyperclip==1.11.0
+.\.venv\Scripts\python.exe -m pip install `
+    vosk==0.3.45 `
+    sounddevice==0.5.6 `
+    pystray==0.19.5 `
+    Pillow==12.3.0 `
+    pyperclip==1.11.0
+```
+
+## Build
+
+From the project root:
+
+```powershell
 .\.venv\Scripts\python.exe .\tools\build_exe.py
 ```
 
-That writes `dist\WinVosk\` — one folder, no console, with the model copied next
-to the exe. `WinVosk.spec` keeps vosk's unused streaming client out of the bundle
-in the first place; `build_exe.py` then prunes `_internal\` of what is left that
-the app cannot reach — unused Pillow codecs, wheel metadata, two dead Tcl
-directories and Tcl's 609-file timezone database — and reports every pattern
-that matched nothing, so an upstream rename cannot pass unnoticed.
+The result is:
 
-Check a build without starting it:
+```text
+dist\WinVosk\
+├── WinVosk.exe
+├── _internal\
+└── models\
+```
+
+The build is:
+
+* one-folder;
+* windowless;
+* model-inclusive;
+* portable.
+
+`WinVosk.spec` excludes Vosk's unused streaming client.
+
+`build_exe.py` then removes unreachable bundle content, including unused:
+
+* Pillow codecs;
+* wheel metadata;
+* Tcl directories;
+* Tcl timezone data.
+
+The build script reports patterns that match nothing so an upstream package rename cannot silently bypass the cleanup step.
+
+## Verify the Bundle
+
+Run:
 
 ```powershell
 .\dist\WinVosk\WinVosk.exe --check-bundle
 ```
 
-It builds the real panel, resolves the `ttk` theme, raises the chip out of the
-tray with its antialiased Pillow plate, and reports. It never opens the
-microphone, so it runs on a machine with no input at all — and it is the only
-check that would notice a bundle missing a Tcl script or a Pillow extension.
+The bundle check:
+
+* creates the real panel;
+* resolves the `ttk` theme;
+* validates the recording chip;
+* checks Pillow rendering;
+* does not open the microphone.
+
+This makes it suitable for machines without an input device.
 
 ---
 
-## Upstream
+# Running from Source
 
-WinVosk is a fork of [alphacep/vosk-api](https://github.com/alphacep/vosk-api),
-the Vosk Speech Recognition Toolkit by AlphaCephei, Apache-2.0. The `vosk`
-package supplies all audio decoding, the prebuilt Kaldi decoder and the model
-format.
+If you have the source checkout:
 
-Everything else — `src\winvosk\`, `src\run.py`, `tools\` — is original work. No
-upstream file is vendored or patched, so moving to a newer `vosk` is a version
-bump rather than a merge. **Decoder questions go upstream; dictation behaviour
-questions go here.**
+```powershell
+.\WinVosk.bat
+```
 
-The models are the ones Vosk publishes and carry their own licences.
+The launcher finds the virtual environment next to itself.
 
-- User guide and internals: [`docs/HOWTO.md`](docs/HOWTO.md)
-- Notes for agents and contributors: [`AGENTS.md`](AGENTS.md)
-- Project context: [`project.md`](project.md)
+Equivalent command:
+
+```powershell
+.\.venv\Scripts\python.exe .\src\run.py
+```
+
+For a console-free launch:
+
+```powershell
+.\.venv\Scripts\pythonw.exe .\src\run.py
+```
+
+---
+
+# Architecture
+
+At a high level, WinVosk follows this pipeline:
+
+```mermaid
+flowchart LR
+    A[Microphone] --> B[PortAudio]
+    B --> C[Vosk Decoder]
+    C --> D[Recognized Text]
+    D --> E[Phrase Correction]
+    E --> F[Unicode Keyboard Input]
+    F --> G[Active Windows Application]
+
+    D --> H[Tray / Panel]
+    E --> I[Daily Dictation Log]
+    E --> J[Application Log]
+```
+
+### Core components
+
+| Component                   | Responsibility                                     |
+| --------------------------- | -------------------------------------------------- |
+| **PortAudio / sounddevice** | Capture microphone input                           |
+| **Vosk**                    | Local speech recognition                           |
+| **Kaldi decoder**           | Speech decoding and model execution                |
+| **Phrase corrector**        | Fix configured near-matches                        |
+| **Unicode keyboard input**  | Insert recognized text into the active application |
+| **Tk/Ttk**                  | Desktop panel                                      |
+| **pystray**                 | System tray integration                            |
+| **Pillow**                  | Recording indicator rendering                      |
+| **JSON configuration**      | Persistent user settings                           |
+| **Plain-text logs**         | Diagnostics and dictation history                  |
+
+---
+
+# Design Principles
+
+## Local first
+
+The speech model runs locally on the CPU.
+
+No account or network service is required.
+
+## Portable by default
+
+The application is self-contained in one directory.
+
+There is no installer and no system-wide registration.
+
+## Keyboard-native output
+
+WinVosk does not depend on the clipboard to insert recognized text.
+
+It sends Unicode keyboard input directly to the active application.
+
+This also makes the output independent of the currently selected keyboard layout.
+
+## Conservative correction
+
+Custom vocabulary correction runs only after recognition has settled on a completed phrase.
+
+This avoids continuously rewriting text while the recognizer is still revising an open utterance.
+
+## Observable behavior
+
+Important runtime state is exposed through:
+
+```text
+--diagnose
+logs\app.log
+logs\report.txt
+```
+
+The goal is to make failures inspectable rather than mysterious.
+
+---
+
+# Upstream
+
+WinVosk uses the Vosk Speech Recognition Toolkit from AlphaCephei:
+
+* [Vosk API](https://github.com/alphacep/vosk-api)
+* Apache-2.0
+
+The `vosk` package supplies:
+
+* speech decoding;
+* the prebuilt Kaldi decoder;
+* model format support.
+
+The WinVosk-specific implementation lives in:
+
+```text
+src\winvosk\
+src\run.py
+tools\
+```
+
+No upstream Vosk source files are vendored or patched.
+
+That keeps Vosk upgrades isolated to dependency/version changes.
+
+> **Decoder behavior:** upstream Vosk.
+> **Dictation behavior:** WinVosk.
+
+The speech models are distributed by Vosk and carry their own licenses.
+
+---
+
+# Project Documentation
+
+* [`docs/HOWTO.md`](docs/HOWTO.md) — user guide, internals, verification probes, and design notes
+* [`AGENTS.md`](AGENTS.md) — notes for agents and contributors
+* [`project.md`](project.md) — project context
+* [`README.ru.md`](README.ru.md) — Russian documentation
+
+---
+
+# Contributing
+
+Contributions are welcome when they keep the project focused, portable, and predictable.
+
+Before opening a pull request:
+
+1. Reproduce the issue with the smallest possible example.
+2. Check `logs\app.log`.
+3. Run `--diagnose` when the issue involves audio, models, paths, or configuration.
+4. Keep changes scoped to the problem.
+5. Update documentation when user-visible behavior changes.
+6. Avoid introducing network dependencies into the recognition path.
+
+For decoder-specific behavior, consult the upstream Vosk project first.
+
+For WinVosk-specific behavior, open an issue or pull request in this repository.
+
+---
+
+# License
+
+WinVosk uses the Vosk Speech Recognition Toolkit under the Apache-2.0 license.
+
+The bundled speech models have their own licenses and should be used according to their respective terms.
+
+See the repository and upstream project for the applicable license files.
+
+---
+
+<p align="center">
+  <sub>Offline speech recognition for Windows. One folder. No cloud.</sub>
+</p>
