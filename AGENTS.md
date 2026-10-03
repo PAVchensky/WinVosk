@@ -11,10 +11,12 @@ below is relative. Run them from the project root.
 
 It is the only checkout, and `origin` is `PAVchensky/WinVosk` on it.
 `D:\AI\WinVosk` is an older tree on this machine, kept only as a staging area for
-release assets: its `src\` stopped on 2026-10-02, so it has none of the toggle
-mode, `--check-bundle` or `README.ru.md`, and its history is unrelated. Never
-push from it, and never copy its `WinVosk.spec` over this one — it collects
-`vosk` with `collect_all`.
+release assets and for the SEO documents under `docs\`: its `src\` stopped on
+2026-10-02, so it has none of the toggle mode, `--check-bundle` or `README.ru.md`,
+and its history is unrelated. Never push from it, and never copy its
+`WinVosk.spec` over this one — it collects `vosk` with `collect_all`. Anything
+wanted from there is ported here deliberately; edit it here, because here is the
+repository.
 
 ## Release
 

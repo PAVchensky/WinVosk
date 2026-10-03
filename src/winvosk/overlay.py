@@ -2,7 +2,7 @@
 
 The panel is hidden most of the time, and its status line goes with it, so a
 recording started by the hotkey leaves no hint that the microphone is live. The
-chip is nine thin equalizer bars over an elapsed clock. The bars are canvas
+chip is eleven thin equalizer bars over an elapsed clock. The bars are canvas
 rectangles that grow from the middle line of the bar field in both directions;
 the rounded plate under them is a Pillow image, antialiased and cached, because
 Tk draws no soft edge and a plate assembled from canvas primitives looks stepped.
@@ -38,11 +38,11 @@ from PIL import Image, ImageDraw, ImageTk
 
 log = logging.getLogger(__name__)
 
-# Geometry. Nine 5 px sticks with a 9 px gap take 9*5 + 8*9 = 117 px, which
-# leaves a 12 px margin on each side of the 141 px window. The bar field is
-# 46 px tall and every bar straddles its middle line, so a bar of half height S
-# reaches BAR_MID-S to BAR_MID+S: the tallest, 20 px, spans 40 of the 46 and
-# nothing can be clipped at any height. The 11 pt clock sits underneath.
+# Geometry. Eleven 2 px sticks with a 4 px gap take 11*2 + 10*4 = 62 px, which
+# leaves a 12 px margin on each side of the 87 px window. The bar field is
+# 20 px tall and every bar straddles its middle line, so a bar of half height S
+# reaches BAR_MID-S to BAR_MID+S: the tallest spans the whole field and nothing
+# can be clipped at any height. The 11 pt clock sits underneath.
 WIDTH = 87
 HEIGHT = 35
 BARS = 11
@@ -60,7 +60,7 @@ MARGIN_ABOVE_TASKBAR = 5
 # Motion. One smoothed energy rises fast and falls slowly, and it is gated: the
 # question asked of the microphone is not how loud but whether anything is being
 # said at all. Above the gate each bar takes its own share of the energy, scaled
-# by the bell profile and swung by its own two-sine wobble, so the nine jump
+# by the bell profile and swung by its own two-sine wobble, so the eleven jump
 # about and never move together. Below the gate the share is zero, every bar
 # settles on the same small height, and that is what ends the session.
 # ATTACK and DECAY are per tick and the release is two of them in a row, the
@@ -211,7 +211,7 @@ _BELL_SPAN = tuple(
 
 
 class RecordingOverlay:
-    """A focusless chip: nine thin equalizer bars over the elapsed seconds.
+    """A focusless chip: eleven thin equalizer bars over the elapsed seconds.
 
     `next_level` is the engine's level accessor. It is called once per tick
     from the Tk thread, never from the audio thread, and None means no

@@ -43,7 +43,7 @@ hotkey.py          global push-to-talk hotkey via WH_KEYBOARD_LL (ctypes), plus 
 keystrokes.py      text typed with KEYEVENTF_UNICODE
 vocabulary.py      phrases.txt loader and --vocab-check
 panel.py           always-on-top Tk panel, two tabs; built unmapped and kept in the tray
-overlay.py         focusless chip: nine bars over a clock, antialiased Pillow plate, centred on the work area
+overlay.py         focusless chip: eleven bars over a clock, antialiased Pillow plate, centred on the work area
 settings.py        settings.json: hotkey list and on/off switches, atomic write, defaults on anything unusable
 corrector.py       own-word correction on finished utterances, difflib, cutoff in one constant, plus the glue that repairs a word the model split across a space
 text.py            every user visible string, ru and en, plus the language switch
@@ -52,7 +52,7 @@ autostart.py       HKCU\...\Run entry
 diary.py           dated history under logs\
 file_transcribe.py fallback: media file to text, plus --self-test
 run.py             entry point
-tools\             verification probes (hold, typing, hook, settings, correct, lang, cleanup), build_exe.py, which prunes _internal\ after PyInstaller, and package_release.py, which stages the release archive
+tools\             verification probes (hold, typing, hook, settings, correct, lang, cleanup), build_exe.py, which prunes _internal\ after PyInstaller, package_release.py, which stages the release archive, and make_images.py, which redraws every README screenshot from the live widgets
 WinVosk.spec       PyInstaller build definition: one folder, no console
 requirements.txt   the five runtime pins, also the ones WinVosk.bat prints
 requirements-dev.txt  pyinstaller, needed only to build
@@ -72,10 +72,12 @@ folder the exe is in (`sys.frozen`), so `models\`, `logs\`, `settings.json` and
 
 `D:\AI\Vosk` is the only checkout: it is what `origin` tracks and what gets
 pushed. `D:\AI\WinVosk` is an older tree kept on this machine as a staging area
-for release assets — its `src\` stopped on 2026-10-02 and has none of the toggle
-mode, `--check-bundle` or `README.ru.md`. Nothing is pushed from it, and its
-`WinVosk.spec` must never be copied over this one: it collects `vosk` with
-`collect_all`, which drags the whole TLS stack into the bundle.
+for release assets and for the SEO documents under `docs\` — its `src\` stopped
+on 2026-10-02 and has none of the toggle mode, `--check-bundle` or
+`README.ru.md`. Nothing is pushed from it, and its `WinVosk.spec` must never be
+copied over this one: it collects `vosk` with `collect_all`, which drags the
+whole TLS stack into the bundle. Anything wanted from there is ported here
+deliberately; edit it here, because here is the repository.
 
 `settings.json` at the checkout root is the one file that is machine state
 rather than part of the checkout: gitignored, atomically written, and read from

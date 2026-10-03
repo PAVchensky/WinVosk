@@ -114,13 +114,14 @@ and the release of the hotkey is ignored entirely in that mode.
 ### The recording chip
 
 While a recording runs, a dark chip sits horizontally centred on the work area,
-16 px above the taskbar: nine thin pink bars across a 46 px field at the top,
-and the elapsed time as `M:SS` centred underneath. It is 141x72 — one canvas
+16 px above the taskbar: eleven thin pink bars across a 20 px field at the top,
+and the elapsed time as `M:SS` centred underneath. It is 87x35 — one canvas
 carrying canvas rectangles for the bars over a single cached image for the
-plate — so there is no image file on disk and no new dependency. Its position
-comes from the real work area rather than from the screen size, so it stays
-correct with the taskbar on any edge or auto-hidden, and it is well clear of the
-panel's own bottom right corner.
+plate, drawn at `_PLATE_SCALE` times the size and folded back down, so there is
+no image file on disk and no new dependency. Its position comes from the real
+work area rather than from the screen size, so it stays correct with the taskbar
+on any edge or auto-hidden, and it is well clear of the panel's own bottom right
+corner.
 
 The bars are an animation, not a reading. The microphone really is measured:
 the engine splits every half second of audio into sixteen sub-frames, takes the
@@ -229,7 +230,7 @@ Vosk\                             the checkout folder, the project itself is Win
 │       ├── keystrokes.py      text typed with KEYEVENTF_UNICODE keystrokes
 │       ├── vocabulary.py      phrase file loader and vocabulary check
 │       ├── panel.py           always-on-top Tk panel, two tabs
-│       ├── overlay.py         recording chip: nine bars over an elapsed clock
+│       ├── overlay.py         recording chip: eleven bars over an elapsed clock
 │       ├── settings.py        settings.json: hotkey, switches, atomic write
 │       ├── corrector.py       own-word correction after the decode
 │       ├── text.py            every user visible string, ru and en
