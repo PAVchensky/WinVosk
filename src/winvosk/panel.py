@@ -123,9 +123,7 @@ class Panel:
         self._language = tk.StringVar(value=language)
         # The chip's equalizer is fed by the engine, not by the panel: the
         # levels live in the audio thread and are read here, on the Tk thread.
-        self._overlay = overlay.RecordingOverlay(
-            self._root, next_level, palette=self._colours
-        )
+        self._overlay = overlay.RecordingOverlay(self._root, next_level)
         self._root.title(self._title())
         self._root.attributes("-topmost", True)
         self._root.protocol("WM_DELETE_WINDOW", self.hide)
@@ -271,7 +269,24 @@ class Panel:
 
         # The key, the mode that key works in, and what that mode does: three
         # properties of one thing, so one card.
-        hotkey = self._card(body, "hotkey_label", first=True)
+        # The mode the key works in sits beside the card's title. It belongs to the
+        # key — it is a property of how the combination acts, not of where the text
+        # goes — and this card is the one thing on the page wide enough to hold
+        # both without either of them wrapping into three lines. In a column of
+        # its own it cost a hundred and thirty pixels and said the same thing in
+        # three.
+        def toggle_beside(head: tk.Misc) -> widgets.Choice:
+            self._toggle_check = widgets.Choice(
+                head, palette=colours, text=text.t("option_toggle"),
+                variable=self._toggle_var, command=self._pick_toggle,
+                wraplength=wrap,
+            )
+            return self._toggle_check
+
+        hotkey = self._card(
+            body, "hotkey_label", first=True, aside=toggle_beside
+        )
+        self._track(self._toggle_check, "option_toggle")
         row = tk.Frame(hotkey.inner, bg=colours.surface, bd=0, highlightthickness=0)
         row.pack(fill="x")
         # A field, not an entry: nothing is typed here, the hook captures.
@@ -286,21 +301,13 @@ class Panel:
         reset_button.pack(side="left", padx=(theme.px(theme.SPACE_SM), 0))
         self._track(reset_button, "button_reset")
         self._hotkey_hint = self._hint(hotkey.inner, "hint_idle", wrap)
-        # It belongs to the key above it rather than to the switches in the
-        # column below: this is a property of how the combination acts, not of
-        # where the text goes.
-        self._toggle_check = widgets.Choice(
-            hotkey.inner, palette=colours, text=text.t("option_toggle"),
-            variable=self._toggle_var, command=self._pick_toggle, wraplength=wrap,
-        )
-        self._toggle_check.pack(fill="x", pady=(theme.px(theme.SPACE), 0))
-        self._track(self._toggle_check, "option_toggle")
         self._toggle_hint = self._hint(hotkey.inner, "toggle_hint", wrap)
 
         columns = tk.Frame(body, bg=colours.bg, bd=0, highlightthickness=0)
-        columns.pack(fill="x", padx=pad, pady=(theme.px(theme.SPACE_MD), 0))
+        columns.pack(fill="x", padx=pad, pady=(theme.px(theme.SPACE), 0))
         left = self._column(columns, padx=(0, gap))
         right = self._column(columns)
+        self._right_column = right
 
         # What the words do when they are recognised, then when the app starts.
         insertion = self._card(left, "group_insertion", first=True)
@@ -359,10 +366,11 @@ class Panel:
             )
             radio.pack(side="left", padx=(0, theme.px(theme.SPACE_LG)))
 
+        # Nothing here until a setting has something to say, and an empty
+        # paragraph that reserves a line and two gaps is twenty pixels of the page
+        # spent on silence.
         self._options_hint = self._hint(body, "", wrap, bg=colours.bg)
-        self._options_hint.pack_configure(
-            padx=pad, pady=(theme.px(theme.SPACE), theme.px(theme.SPACE_LG))
-        )
+        self._options_hint.pack_configure(padx=pad, pady=0)
 
     # Small builders, so the settings tab above reads as a list of what is in it.
 
@@ -377,7 +385,8 @@ class Panel:
         return column
 
     def _card(self, parent: tk.Misc, key: str, padx: int = 0,
-              first: bool = False) -> widgets.Card:
+              first: bool = False,
+              aside: Callable[[tk.Misc], tk.Misc] | None = None) -> widgets.Card:
         """A card with its own title, which a language change repaints in place.
 
         `first` is the top card of a column, which is already spaced from
@@ -385,14 +394,33 @@ class Panel:
         as well is twenty pixels of nothing, twice over, and the settings tab has
         six cards.
         """
-        card = widgets.Card(parent, palette=self._colours)
+        card = widgets.Card(
+            parent, palette=self._colours, padding=theme.SPACE
+        )
         card.pack(
             fill="x", padx=padx,
-            pady=(0 if first else theme.px(theme.SPACE_MD), 0),
+            pady=(0 if first else theme.px(theme.SPACE), 0),
         )
-        title = widgets.heading(card.inner, palette=self._colours)
-        title.configure(text=text.t(key))
-        title.pack(fill="x", pady=(0, theme.px(theme.SPACE_SM)))
+        # `aside` is a factory rather than a widget because a control can only be
+        # given the title row as its real parent once that row exists, and tkinter
+        # cannot move a widget into it afterwards. Assigning `widget.master` changes
+        # the Python attribute and leaves the widget where it was; `pack(in_=...)`
+        # on a widget that nothing manages yet is silently a no-op. Both look like
+        # they worked until the next relayout.
+        if aside is None:
+            title = widgets.heading(card.inner, palette=self._colours)
+            title.configure(text=text.t(key))
+            title.pack(fill="x", pady=(0, theme.px(theme.SPACE_SM)))
+        else:
+            head = tk.Frame(card.inner, bg=self._colours.surface, bd=0,
+                            highlightthickness=0)
+            head.pack(fill="x", pady=(0, theme.px(theme.SPACE_SM)))
+            title = widgets.heading(head, palette=self._colours)
+            title.configure(text=text.t(key))
+            title.pack(side="left")
+            aside(head).pack(
+                side="right", anchor="n", padx=(theme.px(theme.SPACE_MD), 0)
+            )
         self._track(title, key)
         return card
 
@@ -432,12 +460,17 @@ class Panel:
                 f"{'fits' if content <= viewport else 'scrolls'}")
 
     def _hint(self, parent: tk.Misc, key: str, wrap: int, *, bg: str | None = None):
-        """A paragraph under a control: why it is there, or what just happened."""
+        """A paragraph under a control: why it is there, or what just happened.
+
+        An empty one is built but not packed, and `set_option_hint` packs it when
+        there is finally something to say. A widget that is packed is a line tall
+        whether or not it has anything in it.
+        """
         hint = widgets.Paragraph(
             parent, palette=self._colours, text=text.t(key) if key else "",
             colour=self._colours.text_subtle, bg=bg, width=wrap,
         )
-        hint.pack(fill="x", anchor="w", pady=(theme.px(theme.SPACE_SM), 0))
+        hint.show(bool(key))
         if key:
             self._track(hint, key)
         return hint
@@ -453,6 +486,10 @@ class Panel:
         check.pack(fill="x", pady=(theme.px(top_pad), 0))
         self._track(check, key)
         return check
+
+    def _page_pad(self) -> int:
+        """The settings page's own horizontal padding, for a widget added late."""
+        return theme.px(theme.SPACE_XL)
 
     def _wrap(self) -> int:
         """The width a paragraph gets across the whole window, less its own air."""
@@ -542,7 +579,6 @@ class Panel:
         self._colours = theme.palette(name)
         theme.apply(self._root, self._colours)
         theme.reset()
-        overlay.set_palette(name)
         self._root.configure(bg=self._colours.bg)
         self._shell.destroy()
         self._shell = tk.Frame(
@@ -798,6 +834,8 @@ class Panel:
         self._options_hint.configure(
             text=message, fg=self._colours.danger if error else self._colours.success
         )
+        self._options_hint.show(True)
+        self._options_hint.pack_configure(padx=self._page_pad())
 
     # The transcript.
 

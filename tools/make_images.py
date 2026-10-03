@@ -37,13 +37,11 @@ from winvosk import config, overlay, panel as panel_mod, text, theme
 OUT = ROOT / "docs" / "img"
 FONTS = Path(r"C:\Windows\Fonts")
 
-# The palette, taken from the module so a colour change in the app reaches the
-# images without a second edit here. `set_palette` first, because the chip's
-# colours are module constants that move with the theme rather than attributes of
-# the chip: the images have to be told which theme they are drawing before they
-# read them, or a dark chip illustration ships next to a light panel.
+# The chip's colours, read straight off the module so a change in the app reaches
+# the images without a second edit here. The chip has fixed colours of its own and
+# does not follow the theme; the banner below does, and PALETTE is where it gets
+# them.
 THEME = "light"
-overlay.set_palette(THEME)
 PALETTE = theme.palette(THEME)
 BAR_LOW = overlay._rgb(overlay._BAR_LOW)
 BAR_MID = overlay._rgb(overlay._BAR_MID)
@@ -203,23 +201,22 @@ def _keyed_to_alpha(image: Image.Image) -> Image.Image:
     colour transparent and that one is easier to key on. Pillow has no such
     option, so the key goes to alpha here.
 
-    The test is "is this pixel the key, or on the way to it from the chip's own
+    The test is "is this pixel the key, or on the way to it from the plate's own
     outermost colour", and not the equality test alone: resampling blends the key
     into its neighbour, and an equality test leaves a rim of half-keyed pixels
-    exactly where the eye notices. So the key is compared against the glow — the
-    outermost layer of the plate, and therefore the only colour the key is ever
-    blended into — and a pixel goes when the key is nearer than the glow is.
+    exactly where the eye notices. So the key is compared against `_BACKGROUND` —
+    the outermost layer of the plate, and therefore the only colour the key is
+    ever blended into — and a pixel goes when the key is nearer than that is.
 
     It used to be "is this blue dominant", which was a way of saying the same
-    thing for one palette: the key is `#0000fe`, and on the old chip nothing else
-    was blue dominant, because the plate was grey and the bars were pink where red
-    is the largest channel. On the light theme the bars are indigo and the clock
-    is a blue-grey, so that test punched out the two things it was supposed to
-    keep. A test that names the key and the colour it blends into does not care
-    what the palette is.
+    thing for one palette and only that one: the key is `#0000fe`, and it held
+    while the bars were pink, where red is the largest channel. It stopped
+    holding the moment a theme put indigo bars on the chip, and it punched out
+    the two things it was supposed to keep. A test that names the key and the
+    colour it blends into does not care what the palette is.
     """
     key = theme.rgb(overlay._COLOR_KEY)
-    glow = theme.rgb(PALETTE.chip_glow)
+    glow = overlay._rgb(overlay._BACKGROUND)
     rgba = image.convert("RGBA")
     pixels = rgba.load()
 

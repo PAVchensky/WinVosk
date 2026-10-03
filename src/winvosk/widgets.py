@@ -815,6 +815,23 @@ class Paragraph(_Textual, tk.Frame):
     def _get_text(self) -> str:
         return self._body
 
+    def show(self, wanted: bool) -> None:
+        """Give the paragraph a place in the layout, or take it out of it.
+
+        An empty paragraph is still a widget, and a widget that is packed is
+        still a line tall: a hint reserved for a message that has not arrived is
+        height the page cannot use. On the settings tab that is the difference
+        between fitting and scrolling.
+        """
+        if wanted and not self._body:
+            wanted = False
+        if wanted == bool(self.winfo_manager()):
+            return
+        if wanted:
+            self.pack(fill="x", anchor="w", pady=(theme.px(theme.SPACE_XS), 0))
+        else:
+            self.pack_forget()
+
     def set_colour(self, colour: str) -> None:
         """Recolour the prose, which is how a hint says ok or failed."""
         self._text.configure(fg=colour)
@@ -1227,17 +1244,29 @@ class Scroller(tk.Frame):
         elif what == "scroll":
             self.canvas.yview_scroll(int(amount), "pages")
 
-    def bind_wheel(self, widget: tk.Misc | None = None) -> None:
-        """Bind the wheel over `widget` and everything under it.
+    def bind_wheel(self) -> None:
+        """Bind the wheel over the whole page, whatever is under the pointer.
 
-        Recursive because Tk sends the event to the leaf, and there is no `all`
-        binding here on purpose: `bind_all` would also catch a wheel over the
-        recording chip and over any message box, and scroll this panel from
-        behind a dialog.
+        Two things this has to get right, and neither is obvious. Tk sends the
+        event to the widget under the pointer and then, if nothing handled it, to
+        that widget's class — and a `Text` widget's class handles it, scrolling
+        itself. So every widget in the page gets a binding of its own, not only
+        the ones with no scrolling of their own, or a wheel over any paragraph
+        scrolls that one-line paragraph instead of the page.
+
+        And the content is not in the canvas's child list at all: `body` is put
+        there with `create_window`, and a widget embedded that way does not appear
+        in `winfo_children()`. Walking the canvas finds nothing, which is exactly
+        why the settings page could not be scrolled by wheel at all.
         """
-        for child in widget.winfo_children() if widget is not None else ():
-            self.bind_wheel(child)
-        (widget or self).bind("<MouseWheel>", self._on_wheel)
+        for widget in (self, self.canvas, self.body):
+            widget.bind("<MouseWheel>", self._on_wheel)
+        self._bind_below(self.body)
+
+    def _bind_below(self, widget: tk.Misc) -> None:
+        for child in widget.winfo_children():
+            child.bind("<MouseWheel>", self._on_wheel)
+            self._bind_below(child)
 
     def _on_wheel(self, event: tk.Event) -> str:
         self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")

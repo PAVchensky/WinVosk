@@ -90,6 +90,16 @@ SHADOW_ALPHA_DARK = 96
 SUPERSAMPLE = 4
 
 
+# The tray icon's own two colours, shared by both themes on purpose. A taskbar
+# icon is the one piece of this interface that is not on top of our own background:
+# it sits on whatever the taskbar and the wallpaper are, in whatever light or dark
+# the machine is set to, next to icons that are all their own colours. An accent
+# plate looks like an app button; a dark one reads as a microphone on any taskbar,
+# in either system theme, and it is what this icon has always been.
+_TRAY_IDLE = "#2F3640"
+_TRAY_ACTIVE = "#B0231F"
+
+
 @dataclass(frozen=True)
 class Palette:
     """Every colour the interface uses, for one theme.
@@ -163,9 +173,9 @@ LIGHT = Palette(
     chip_bar_mid="#818CF8",
     chip_bar_high="#6366F1",
     chip_clock="#5B6472",
-    tray_idle_bg="#6366F1",
+    tray_idle_bg=_TRAY_IDLE,
     tray_idle_fg="#FFFFFF",
-    tray_active_bg="#DC2626",
+    tray_active_bg=_TRAY_ACTIVE,
     tray_active_fg="#FFFFFF",
 )
 
@@ -196,9 +206,9 @@ DARK = Palette(
     chip_bar_mid="#6366F1",
     chip_bar_high="#818CF8",
     chip_clock="#A5B4FC",
-    tray_idle_bg="#4F46E5",
+    tray_idle_bg=_TRAY_IDLE,
     tray_idle_fg="#FFFFFF",
-    tray_active_bg="#DC2626",
+    tray_active_bg=_TRAY_ACTIVE,
     tray_active_fg="#FFFFFF",
 )
 
