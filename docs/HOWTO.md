@@ -24,15 +24,15 @@ Start it with `WinVosk.bat`, or let Windows start it on login.
 | Action | How |
 | --- | --- |
 | Dictate | hold `Win + Ctrl + Right` **or** `Alt + Win` and speak; let go to stop |
-| Dictate, if **Переключать запись** is on | press the combination once to start, once more to stop |
-| Dictate with the mouse | hold the **Удерживайте** button in the panel |
-| End it without letting go | **Стоп** in the panel, or tray → **Остановить запись** |
-| Copy the result | the **Копировать** button or the tray menu |
-| Open the panel | left click the tray icon, or tray → **Показать панель** |
+| Dictate, if **Toggle recording** is on | press the combination once to start, once more to stop |
+| Dictate with the mouse | hold the **Hold** button in the panel |
+| End it without letting go | **Stop** in the panel, or tray → **Stop recording** |
+| Copy the result | the **Copy** button or the tray menu |
+| Open the panel | left click the tray icon, or tray → **Show the panel** |
 | Hide the panel | tray → **Скрыть панель**, or just close the window — it goes to the tray |
-| Change the hotkey | panel → **Настройки** tab, see [Settings](#settings) |
-| Record on press instead of hold | panel → **Настройки** → **Переключать запись** |
-| Type or not, clipboard, autostart | panel → **Настройки** tab, see [Settings](#куда-попадает-текст) |
+| Change the hotkey | panel → **Settings** tab, see [Settings](#settings) |
+| Record on press instead of hold | panel → **Settings** → **Toggle recording** |
+| Type or not, clipboard, autostart | panel → **Settings** tab, see [Where the text goes](#where-the-text-goes) |
 | Teach it your own words | put them in `phrases.txt`, see [Custom vocabulary](#custom-vocabulary) |
 | Quit | tray menu → **Выход** |
 
@@ -41,7 +41,7 @@ default: release and the session closes, the text is written to
 `logs\YYYY-MM-DD.txt`, and the caret is left where the last word landed. Hold
 again for the next sentence.
 
-**Переключать запись** in the settings tab replaces that with a toggle: one
+**Toggle recording** in the settings tab replaces that with a toggle: one
 press starts, the next one stops. See [Recording mode](#recording-mode) for
 what it costs and how it is built.
 
@@ -56,7 +56,7 @@ key to hold.
 
 ### Recording mode
 
-**Переключать запись** (off by default) chooses how one press of the
+**Toggle recording** (off by default) chooses how one press of the
 combination is read.
 
 | | Push to talk (default) | Toggle |
@@ -64,7 +64,7 @@ combination is read.
 | press | start | start |
 | release | stop | nothing, the keys are ignored |
 | press again | start a new session | stop |
-| ends a session that nobody can end by pressing again | — | **Стоп** on the panel, **Остановить запись** in the tray, or the 180 s ceiling |
+| ends a session that nobody can end by pressing again | — | **Stop** on the panel, **Stop recording** in the tray, or the 180 s ceiling |
 
 The mode is not a flag inside the hook. `HotkeyListener` takes both `on_press`
 and `on_release`, and push to talk *is* the presence of `on_release`: the hook
@@ -81,7 +81,7 @@ a quick second press could be taken for another start.
 What a toggle gives up is the reason push to talk exists. A held session ends by
 letting go, and a release that never arrives cannot happen; a toggle ends by
 pressing again, and a press that never arrives leaves the microphone open. The
-three ways out that remain are **Стоп** in the panel, **Остановить запись** in
+three ways out that remain are **Stop** in the panel, **Stop recording** in
 the tray — both enabled for as long as the recording runs — and
 `MAX_SESSION_SECONDS`, which is why that constant stops being a belt-and-braces
 limit the moment toggle mode is possible. The hint under the switch names all
@@ -95,7 +95,7 @@ really in effect.
 
 ### Ending a recording early
 
-**Стоп** in the panel and **Остановить запись** in the tray menu finish a
+**Stop** in the panel and **Stop recording** in the tray menu finish a
 recording that was started by holding the hotkey, without releasing the keys.
 That is what a long sentence needs: stop the microphone, let the tail be typed
 and written, and keep holding. Releasing the keys afterwards changes nothing —
@@ -106,7 +106,7 @@ accident does nothing. A stop ends the session exactly as a release does: the
 tail is typed, the text goes to `logs\YYYY-MM-DD.txt`, and the next press of the
 hotkey starts a fresh one.
 
-In **Переключать запись** mode they matter more rather than less, because that
+In **Toggle recording** mode they matter more rather than less, because that
 is the mode where a press can be missed — see
 [Recording mode](#recording-mode). They stay enabled for the whole recording,
 and the release of the hotkey is ignored entirely in that mode.
@@ -182,7 +182,7 @@ of it.
 - **right click** — opens the menu
 
 It is a single click that opens the panel, not a double click, and the shipped
-behaviour is worth stating precisely. **Показать панель** is the tray menu's
+behaviour is worth stating precisely. **Show the panel** is the tray menu's
 default item, and pystray's Windows backend activates the default item on
 `WM_LBUTTONUP`, that is, on button *release*. There is no `WM_LBUTTONDBLCLK`
 handling anywhere in that backend, so there is no double click message to react
@@ -485,7 +485,7 @@ where the settings file is, the typing delay, the session limit and every input
 device PortAudio can see. Its `base dir` line is the quick confirmation that the
 app resolved the checkout it is supposed to be in — or the folder the exe is in
 — and its `hotkeys` line is the quick confirmation of what the panel's
-**Настройки** tab actually produced: the two can disagree, and when they do the
+**Settings** tab actually produced: the two can disagree, and when they do the
 file on disk is the winner and the panel is showing a rollback.
 
 `records from` is worth reading when dictation does not start. PortAudio's own
@@ -563,42 +563,42 @@ what is answered.
 
 ## Settings
 
-The panel has two tabs. **Диктовка** is the transcription itself, unchanged.
-**Настройки** holds the combination that starts a recording, three switches — where
+The panel has two tabs. **Dictation** is the transcription itself, unchanged.
+**Settings** holds the combination that starts a recording, three switches — where
 the text goes, whether it also lands in the clipboard, whether your own words are
 corrected — whether Windows starts the app, and the language. Everything on that
 tab is written at once, on the click, and is in force immediately.
 
-### Куда попадает текст
+### Where the text goes
 
 Four switches, and they are independent of each other:
 
 | Switch | Meaning | Default |
 | --- | --- | --- |
 | **Печатать в активное окно** | the recognised words are typed at the caret of whatever window was in front, as they are recognised | on |
-| **Сразу копировать в буфер** | every finished session is also copied to the clipboard | off |
-| **Исправлять свои слова** | a word the model heard as something close to one of yours is replaced by yours | on |
-| **Автозапуск с Windows** | the app starts at login, with no console and no panel | off |
+| **Copy to the clipboard right away** | every finished session is also copied to the clipboard | off |
+| **Correct my own words** | a word the model heard as something close to one of yours is replaced by yours | on |
+| **Start with Windows** | the app starts at login, with no console and no panel | off |
 
-**Печать в активное окно** off means nothing is typed anywhere: the session is
+**Type into the active window** off means nothing is typed anywhere: the session is
 recognised, shown in the panel and written to `logs\YYYY-MM-DD.txt`, and the
-**Копировать** button is how you get it out. Turn it on to have the words land
+**Copy** button is how you get it out. Turn it on to have the words land
 in the document directly.
 
-**Сразу копировать в буфер** overwrites whatever was in the clipboard after
+**Copy to the clipboard right away** overwrites whatever was in the clipboard after
 every session, so it is worth leaving off unless something else in your workflow
 wants the recognised text there. Copying out is not how the text is inserted —
 the words still arrive as keystrokes — so the clipboard is only ever read from
 by other programs.
 
-**Исправлять свои слова** works from the words in `phrases.txt` and is described
+**Correct my own words** works from the words in `phrases.txt` and is described
 in [Custom vocabulary](#custom-vocabulary). It works on finished phrases only,
 not on the half recognised text, and every replacement is written to
-`logs\app.log`. The **Проверить свои слова** button under it asks the loaded model
+`logs\app.log`. The **Check my own words** button under it asks the loaded model
 which of those words it can hear — see
 [Check what the model hears](#check-what-the-model-hears).
 
-**Автозапуск с Windows** writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\WinVosk`
+**Start with Windows** writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\WinVosk`
 pointing at `pythonw.exe` and `src\run.py`, so there is no console window and
 the panel stays in the tray. It is per user, needs no administrator rights, and
 can also be set from a shell:
@@ -614,9 +614,9 @@ the switches: a failed write leaves the previous value on the disk, and a failed
 registry write is reported with the checkbox restored to what the Run key really
 holds. The switch is never left showing something that is not in effect.
 
-### Язык / Language
+### Language
 
-**Русский** and **English**, chosen with two buttons, and applied at once: the
+**Russian** and **English**, chosen with two buttons, and applied at once: the
 panel, the tray menu, the notifications, the capture reasons and the window title
 all repaint in the new language without a restart and without losing anything —
 the text in the box, the recording state and the switch positions stay exactly
@@ -659,12 +659,12 @@ Two kinds of input are refused, each with the reason shown under the field:
 
 After a refusal the capture stays live, so the next attempt needs no second
 click. **Escape** is reserved for cancelling and can therefore never become the
-main key of a combination. **Сбросить** forgets the stored value and brings back
+main key of a combination. **Reset** forgets the stored value and brings back
 the two shipped defaults, `win+ctrl+right` and `alt+win`.
 
 A captured combination replaces the whole list: after a change the app holds one
 combination, and the field, the footer and the tray header show it alone.
-**Сбросить** is how the pair comes back.
+**Reset** is how the pair comes back.
 
 ### Where the settings are stored
 
@@ -725,8 +725,8 @@ Everything else is a constant in `src\winvosk\config.py`:
 | `MODEL_NAME` | preferred model directory |
 | `MIC_DEVICE` | PortAudio input index, `None` for the system default |
 | `LIVE_TYPE_DEFAULT` | initial state of **Печатать в активное окно**, `True` |
-| `CLIPBOARD_DEFAULT` | initial state of **Сразу копировать в буфер**, `False` |
-| `TOGGLE_DEFAULT` | initial state of **Переключать запись**, `False` |
+| `CLIPBOARD_DEFAULT` | initial state of **Copy to the clipboard right away**, `False` |
+| `TOGGLE_DEFAULT` | initial state of **Toggle recording**, `False` |
 | `TYPE_DELAY` | pause after each revision, in seconds |
 | `MAX_SESSION_SECONDS` | ceiling on one session; rare in push to talk, load-bearing in toggle |
 | PHRASES_FILE | the own-word list: `--vocab-check` and the correction pass |
@@ -760,8 +760,8 @@ comment.
 
 ### Check what the model hears
 
-The **Проверить свои слова** button under **Исправлять свои слова** in the
-**Настройки** tab, or from a shell:
+The **Check my own words** button under **Correct my own words** in the
+**Settings** tab, or from a shell:
 
 ```powershell
 .\.venv\Scripts\python.exe .\src\run.py --vocab-check
@@ -771,9 +771,35 @@ The **Проверить свои слова** button under **Исправлят
 phrases file: <project>\phrases.txt  (7 phrase(s))
 heard by the model : 7
   ok      телеграм
-  ok      дропбокс
   ok      фейсбук
+  ok      дропбокс
+  ok      эмодзи
+  ok      йоцунфэнь
+  ok      востоков
+  ok      проверка связи
 unknown to the model: 0
+```
+
+The counts are `len(known)` and `len(missing)`, and one `ok` or `MISSING` row is
+printed per phrase, so a full list is always as tall as the file. A list with
+something missing also gets the four-line footer from
+`vocabulary.report_lines`, which is the only dead end in the application:
+
+```
+phrases file: <project>\phrases.txt  (7 phrase(s))
+heard by the model : 5
+  ok      телеграм
+  ok      фейсбук
+  ok      дропбокс
+  ok      эмодзи
+  ok      востоков
+unknown to the model: 2
+  MISSING йоцунфэнь
+  MISSING йоцунфень
+
+Words the model has never heard cannot be fixed at runtime.
+They need a language model rebuild, see README.md, section
+"Custom vocabulary", which needs a Kaldi build on Linux.
 ```
 
 The button and the flag print the same report, because both go through
@@ -793,8 +819,8 @@ read; vosk tells us instead.
 
 A word marked `ok` can still be misheard: the model knows «дропбокс» and prefers
 a different word for the same sound. That is an ambiguity, not a gap, and it is
-fixed after the decode rather than inside it — **Исправлять свои слова** in the
-**Настройки** tab, on by default.
+fixed after the decode rather than inside it — **Correct my own words** in the
+**Settings** tab, on by default.
 
 Put the words you say in `phrases.txt` and every finished phrase has each of its
 words compared with them:
@@ -821,10 +847,11 @@ second scores 0.88 and fires, giving `йо йоцунфэнь` — recognisable,
 was meant.
 
 What it deliberately does not touch: the half recognised text, so what is on
-screen stays stable while the model is still thinking; words shorter than four
-letters, where a wrong correction is easy to miss; and anything longer than
-about 0.75 similar, which covers «подбоксник» and «дропбоксник» next to
-«дропбокс». The threshold is `CUTOFF` in `src\winvosk\corrector.py`. Measured
+screen stays stable while the model is still thinking; and words shorter than
+four letters, where a wrong correction is easy to miss. The threshold is
+`CUTOFF` in `src\winvosk\corrector.py`, and it is a floor rather than a ceiling: a
+dropped letter scores 0.93 and catching it is the point, while anything **further**
+than about 0.75 from every entry is left alone. Measured
 on this machine: over the 138 neighbouring word pairs in `logs\*.txt`, nothing
 was glued and no line changed, and against a 500 word list of random tokens the
 false replacement rate is about 0.03%.
@@ -877,7 +904,7 @@ Ubuntu. It is not something this app can do on Windows on demand.
 Practical options while that is out of reach:
 
 - Rewrite the word so it is close to something the model knows, for example
-  "фейсбук" instead of "фейсбук мессенджер". Recognised forms show in the panel
+  «фейсбук» instead of «фейсбук мессенджер». Recognised forms show in the panel
   and in `logs\YYYY-MM-DD.txt`, so it is visible what it actually heard.
 - Use a larger model. `vosk-model-ru-0.10` and the 0.42 large model cover more
   vocabulary and are far more accurate, at the cost of RAM and startup time.
@@ -891,8 +918,8 @@ independent of the active keyboard layout and goes to whatever control currently
 has the caret. Russian text comes out correctly even with a Latin layout
 selected.
 
-Copying out is a separate, optional step: the **Сразу копировать в буфер**
-switch and the **Копировать** button read the finished text into the clipboard
+Copying out is a separate, optional step: the **Copy to the clipboard right away**
+switch and the **Copy** button read the finished text into the clipboard
 for other programs to pick up. Neither ever puts anything into a window, so
 nothing here depends on focus, and a switch that fails leaves the previous state
 in place.
@@ -932,7 +959,7 @@ implements the hook directly with ctypes.
 Only the main key is blocked in the hook, so modifiers always reach the
 foreground application and can never be left stuck down. Blocking the main key
 is what stops Windows from acting on the combination itself. The one exception is
-the hotkey capture in the **Настройки** tab, where the same hook swallows every
+the hotkey capture in the **Settings** tab, where the same hook swallows every
 key instead of just the main one — see [Settings](#dictation-hotkey).
 
 ### What blocks, and what only repeats away
@@ -997,9 +1024,9 @@ got through:
   how `Win` can be recorded at all, but it means no application receives
   anything until the capture ends. `Escape` ends it; quitting the app ends it
   too.
-- **Стоп** and **Остановить запись** end the recording without waiting for the
+- **Stop** and **Stop recording** end the recording without waiting for the
   keys to be released, so a long sentence need not be cut off mid-word. They are
-  greyed out when nothing is recording. In **Переключать запись** mode they are
+  greyed out when nothing is recording. In **Toggle recording** mode they are
   the way out of a recording whose second press never comes, the 180 s ceiling
   being the other.
 - Left clicking the tray icon opens the panel *and focuses it*. That is the one

@@ -18,7 +18,7 @@ APP_NAME = "WinVosk"
 # number is written: `--diagnose` prints it, the panel shows it in its title and
 # `winvosk.__version__` derives from it, so a bug report can be tied to a build
 # without anyone reading a file.
-VERSION = "1.2"
+VERSION = "1.3"
 
 # True inside a PyInstaller bundle, where the modules sit in `_internal\` and
 # `__file__` no longer points at the folder the user keeps their files in.
@@ -66,7 +66,7 @@ TOGGLE_DEFAULT = False
 CLIPBOARD_DEFAULT = False
 # "Исправлять свои слова": near misses of the words in PHRASES_FILE are fixed.
 CORRECT_WORDS_DEFAULT = True
-# The interface language, `text.LANGUAGES`, Russian unless the user says otherwise.
+# The interface language, `text.LANGUAGES`, English unless the user says otherwise.
 LANGUAGE_DEFAULT = text.DEFAULT_LANGUAGE
 TYPE_DELAY = 0.02
 MAX_SESSION_SECONDS = 180.0

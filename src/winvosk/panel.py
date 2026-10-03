@@ -12,6 +12,13 @@ without rebuilding the window: the widgets stay, the state stays, and only the
 text is re-painted. Widgets whose text carries a value — the footer, the window
 title, the record button — are refreshed by the setter that owns the value, so
 the registry holds only the static ones.
+
+The settings tab is taller than the window, so it is built on a canvas and
+scrolls. That is not decoration: a `Frame` inside the notebook is laid out at
+its full height and simply runs off the bottom of the window, so the last two
+groups — autostart and the language — were there in the code and unreachable
+with a mouse. `check_settings_reachable` is what proves the bottom of the tab
+can be reached, and `--check-bundle` runs it.
 """
 
 from __future__ import annotations
@@ -27,9 +34,22 @@ from . import config, overlay, text, vocabulary
 log = logging.getLogger(__name__)
 
 WIDTH = 560
-HEIGHT = 440
+# Tall enough for the whole settings tab at 100% scaling, which is what keeps
+# the language and the autostart switch in sight on a normal screen. Anything
+# more would not fit a small display either, and anything less scrolls — which
+# `_place` allows and nothing depends on. The dictionary tab simply gets a
+# larger transcript box.
+HEIGHT = 700
+MIN_WIDTH = 360
+MIN_HEIGHT = 260
 MARGIN = 24
 POLL_MS = 60
+# One wheel notch on the settings tab, in pixels, rather than Tk's default
+# fraction of the window, so the tab moves by the same step at any window height.
+SCROLL_STEP = 40
+# The settings page's own padding, and what its wrapped lines are measured against.
+PAGE_PAD = 16
+WRAP_MIN = 160
 
 _CAPTURE_PROMPT = "capture_prompt"
 
@@ -70,6 +90,15 @@ class Panel:
         self._status_raw = ""
         self._status_color = "#1f7a34"
         self._device = ""
+        # The settings tab and its scrolled page, filled in by `_settings_page`.
+        self._settings_canvas: tk.Canvas | None = None
+        self._settings_inner: tk.Frame | None = None
+        self._settings_item: str | None = None
+        self._scrollbar: ttk.Scrollbar | None = None
+        self._scroll_shown = False
+        # The labels that have to re-wrap when the window is resized, rather than
+        # laying out in one line and being cut off at the edge of the window.
+        self._wrapped: list[tk.Label] = []
 
         self._root = tk.Tk()
         # Withdrawn before a single widget is built, so the window is never
@@ -98,9 +127,9 @@ class Panel:
         body = tk.Frame(self._notebook)
         self._notebook.add(body, text=text.t("tab_dictation"))
         self._track_tab(body, "tab_dictation")
-        settings = tk.Frame(self._notebook, padx=16, pady=16)
-        self._notebook.add(settings, text=text.t("tab_settings"))
-        self._track_tab(settings, "tab_settings")
+        settings_page, settings = self._settings_page(self._notebook)
+        self._notebook.add(settings_page, text=text.t("tab_settings"))
+        self._track_tab(settings_page, "tab_settings")
 
         header = tk.Frame(body, padx=12, pady=10)
         header.pack(fill="x")
@@ -162,9 +191,13 @@ class Panel:
         intro = tk.Label(
             settings, text=text.t("settings_intro"),
             font=("Segoe UI", 9), anchor="w", justify="left",
+            wraplength=WIDTH - 2 * PAGE_PAD,
         )
         intro.pack(fill="x")
         self._track(intro, "settings_intro")
+        # Wrapped, so the sentence is read in full rather than cut at the right
+        # edge of the window, and re-wrapped on a resize by `_resize_settings`.
+        self._wrapped.append(intro)
         hotkey_title = tk.Label(
             settings, text=text.t("hotkey_label"), font=("Segoe UI", 10, "bold"),
             anchor="w",
@@ -204,11 +237,131 @@ class Panel:
         self._track(self._toggle_check, "option_toggle")
         self._toggle_hint = tk.Label(
             settings, text=text.t("toggle_hint"), fg="#777777",
-            font=("Segoe UI", 8), anchor="w", justify="left", wraplength=WIDTH - 32,
+            font=("Segoe UI", 8), anchor="w", justify="left",
+            wraplength=WIDTH - 2 * PAGE_PAD,
         )
         self._toggle_hint.pack(fill="x", pady=(4, 0))
+        self._wrapped.append(self._toggle_hint)
 
         self._build_options(settings)
+        self._bind_wheel(settings_page)
+
+    def _settings_page(self, parent: tk.Misc) -> tuple[tk.Frame, tk.Frame]:
+        """The settings tab on a canvas that scrolls, and the frame to fill.
+
+        The tab is a hotkey field, four switches and three groups, which is more
+        pixels than the window has and, on a short screen or a scaled display,
+        more than any height is. A `Frame` inside a notebook does not adapt: it
+        is laid out at its full requested height and simply runs off the bottom
+        of the window, so everything below the fold was drawn outside it and
+        could not be clicked. That is how the autostart switch and the language
+        buttons came to be missing while both were present in the code.
+
+        Returns the page to hand to the notebook and the frame the widgets go
+        into, so the caller keeps building the tab the way it always has.
+        """
+        canvas = tk.Canvas(parent, borderwidth=0, highlightthickness=0,
+                           yscrollincrement=SCROLL_STEP)
+        bar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        # Left unpacked until there is something to scroll to: an inert
+        # scrollbar down the side of a tab that fits reads as a control that
+        # does nothing, and the settings tab is photographed for the README.
+        self._scrollbar = bar
+        inner = tk.Frame(canvas, padx=PAGE_PAD, pady=PAGE_PAD)
+        self._settings_item = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda _event: self._resize_settings())
+        canvas.bind("<Configure>",
+                    lambda event: self._resize_settings(event.width))
+        self._settings_canvas = canvas
+        self._settings_inner = inner
+        return canvas, inner
+
+    def _bind_wheel(self, widget: tk.Misc) -> None:
+        """Let the wheel scroll the settings tab from anywhere inside it.
+
+        Bound on the page and on every widget in it, rather than with `bind_all`:
+        the app has one scrolling view, and a global binding would also fire
+        while the pointer is over the recording chip, which is a window of its
+        own and has nothing to scroll.
+        """
+        widget.bind("<MouseWheel>", self._on_wheel, add="+")
+        for child in widget.winfo_children():
+            self._bind_wheel(child)
+
+    def _on_wheel(self, event) -> None:
+        """Scroll the settings tab, and only while it is the one on screen."""
+        canvas = self._settings_canvas
+        if canvas is None or not event.delta or not canvas.winfo_ismapped():
+            return
+        canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+    def _resize_settings(self, width: int | None = None) -> None:
+        """Follow the content: the page is as wide as the window, and scrolls.
+
+        `width` is given only by the canvas, which is the one that knows how
+        wide it is; the inner frame asks for the same work when the content
+        changed height, which is what a change of language does.
+        """
+        canvas = self._settings_canvas
+        if canvas is None:
+            return
+        if width is not None and self._settings_item:
+            canvas.itemconfigure(self._settings_item, width=width)
+            for label in self._wrapped:
+                label.configure(wraplength=max(WRAP_MIN, width - 2 * PAGE_PAD))
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        self._toggle_scrollbar()
+
+    def _toggle_scrollbar(self) -> None:
+        """Show the scrollbar while the tab is taller than the window."""
+        canvas, bar = self._settings_canvas, self._scrollbar
+        if canvas is None or bar is None:
+            return
+        region = canvas.bbox("all")
+        overflow = bool(region) and region[3] > canvas.winfo_height()
+        if overflow == self._scroll_shown:
+            return
+        self._scroll_shown = overflow
+        if overflow:
+            bar.pack(side="right", fill="y")
+        else:
+            bar.pack_forget()
+            # Nothing to scroll to any more, so a view left at the end is put
+            # back: a shorter tab must not stay showing its own bottom edge.
+            canvas.yview_moveto(0.0)
+
+    def check_settings_reachable(self) -> str:
+        """Prove that the bottom of the settings tab can be reached, and report how.
+
+        Walks the tab to its end and asks whether the last line of it is inside
+        the window. Returns the content height, the viewport and whether it all
+        fits; raises `AssertionError` when the bottom of the tab is still off
+        screen after scrolling, which is the failure this whole arrangement
+        exists to make impossible.
+        """
+        canvas, inner = self._settings_canvas, self._settings_inner
+        if canvas is None or inner is None:
+            raise AssertionError(
+                "the settings tab is not on a canvas, so a tab taller than the "
+                "window is clipped with no way to reach what is below the edge"
+            )
+        self._root.update_idletasks()
+        region = canvas.bbox("all")
+        content = region[3] if region else 0
+        viewport = canvas.winfo_height()
+        canvas.yview_moveto(1.0)
+        self._root.update_idletasks()
+        bottom = self._options_hint.winfo_rooty() + self._options_hint.winfo_height()
+        edge = canvas.winfo_rooty() + canvas.winfo_height()
+        if bottom > edge + 1:
+            raise AssertionError(
+                f"the bottom of the settings tab is unreachable: the last line "
+                f"ends at {bottom} and the page shows up to {edge}"
+            )
+        return (f"{content}px of settings in a {viewport}px page, "
+                f"{'fits' if content <= viewport else 'scrolls'}")
 
     def _build_options(self, parent: tk.Misc) -> None:
         """The switches that decide where the text goes, when it starts, its language."""
@@ -357,12 +510,21 @@ class Panel:
         self._commands.put((command, bool(variable.get())))
 
     def _place(self) -> None:
+        """Put the window in the corner, as large as it asks and the screen allows.
+
+        The size is a request, not a promise: a window taller than the screen
+        cannot be moved with the mouse afterwards, and the title bar would sit
+        off the top. The settings tab scrolls, so a clamped height costs a
+        scrollbar and nothing else.
+        """
         screen_w = self._root.winfo_screenwidth()
         screen_h = self._root.winfo_screenheight()
-        x = max(0, screen_w - WIDTH - MARGIN)
-        y = max(0, screen_h - HEIGHT - MARGIN)
-        self._root.geometry(f"{WIDTH}x{HEIGHT}+{x}+{y}")
-        self._root.minsize(360, 260)
+        width = min(WIDTH, max(MIN_WIDTH, screen_w - 2 * MARGIN))
+        height = min(HEIGHT, max(MIN_HEIGHT, screen_h - 2 * MARGIN))
+        x = max(0, screen_w - width - MARGIN)
+        y = max(0, screen_h - height - MARGIN)
+        self._root.geometry(f"{width}x{height}+{x}+{y}")
+        self._root.minsize(MIN_WIDTH, MIN_HEIGHT)
 
     def _press(self, _event=None) -> None:
         # In toggle mode one press is the whole gesture, so the release has

@@ -21,7 +21,7 @@ Windows x64 · no installer · no admin rights · one folder
 
 - **Push to talk by default, toggle if you prefer.** Recording lasts exactly as
   long as you hold the keys — or one press starts it and the next one stops it,
-  if you turn on **Переключать запись**. See
+  if you turn on **Toggle recording**. See
   [Recording mode](#recording-mode).
 - **Layout independent.** Text is typed as `KEYEVENTF_UNICODE` keystrokes, so
   Russian comes out right with a Latin layout selected. The clipboard is never
@@ -58,10 +58,11 @@ Download the archive and **unpack it**. Do not run the exe from inside the zip:
 Windows cannot read `_internal\` from an archive, and the app would die on a
 missing file with nothing to show for it.
 
-1. Unpack `WinVosk-1.1.zip` into any folder you can write to — the Desktop, a
-   folder in `D:\`, anywhere. **Not** under `C:\Program Files`: the app writes
-   its log and its settings next to itself, and that folder is read-only without
-   administrator rights.
+1. Unpack the `WinVosk-<version>-win64.zip` from the
+   [Releases page](https://github.com/PAVchensky/WinVosk/releases) into any
+   folder you can write to — the Desktop, a folder in `D:\`, anywhere. **Not**
+   under `C:\Program Files`: the app writes its log and its settings next to
+   itself, and that folder is read-only without administrator rights.
 2. Double-click `WinVosk.exe`.
 3. Look for the microphone icon in the tray, next to the clock. It may be under
    the `^` arrow.
@@ -95,7 +96,7 @@ than quitting.
 
 ### Start it automatically at login
 
-Open the panel → **Настройки** → tick **Автозапуск с Windows**. That writes one
+Open the panel → **Settings** → tick **Start with Windows**. That writes one
 `HKCU\...\CurrentVersion\Run` value, per user, no administrator rights, no
 startup folder, no scheduled task. Untick it to remove it.
 
@@ -123,12 +124,12 @@ Use `pythonw.exe` instead of `python.exe` for a start with no console window.
 | I want to | Do this |
 | --- | --- |
 | Dictate a sentence | hold `Win + Ctrl + Right` **or** `Alt + Win`, speak, let go |
-| Dictate, if **Переключать запись** is on | press the combination once to start, once more to stop |
-| Dictate with the mouse | hold the **Удерживайте** button in the panel |
+| Dictate, if **Toggle recording** is on | press the combination once to start, once more to stop |
+| Dictate with the mouse | hold the **Hold** button in the panel |
 | Dictate several sentences with one hand | keep `Win` and `Ctrl` down and tap `→` once per sentence |
-| Finish a long sentence without letting go | **Стоп** in the panel, or tray → **Остановить запись** |
-| Stop everything | release the keys; tray → **Выход** quits |
-| Get the text out | **Копировать** in the panel, or tray → **Скопировать текст** |
+| Finish a long sentence without letting go | **Stop** in the panel, or tray → **Stop recording** |
+| Stop everything | release the keys; tray → **Quit** quits |
+| Get the text out | **Copy** in the panel, or tray → **Copy the text** |
 | Open the panel | left-click the tray icon |
 | Put the panel away | close the window — it goes to the tray, it does not quit |
 
@@ -144,7 +145,7 @@ into your document and not into the chip.
 
 <img src="docs/img/chip.gif" width="348" alt="The recording chip: eleven thin pink bars over an elapsed clock, animating while a recording is running">
 
-**You can change the combination** in **Настройки**; see
+**You can change the combination** in **Settings**; see
 [Settings](#settings-every-one-of-them).
 
 ### Recording mode
@@ -153,18 +154,18 @@ Recording lasts exactly as long as you hold the keys, and that is the shipped
 default: release, and the session closes, the text goes to
 `logs\YYYY-MM-DD.txt`, and the caret is left where the last word landed.
 
-**Переключать запись** in the **Настройки** tab replaces that with a toggle.
+**Toggle recording** in the **Settings** tab replaces that with a toggle.
 
 | | Hold (default) | Toggle |
 | --- | --- | --- |
 | press | start | start |
 | release | stop | nothing — the keys are ignored |
 | press again | start a new sentence | stop |
-| Finish a sentence a second press never comes for | release the keys | **Стоп** in the panel, **Остановить запись** in the tray, or the three-minute ceiling |
+| Finish a sentence a second press never comes for | release the keys | **Stop** in the panel, **Stop recording** in the tray, or the three-minute ceiling |
 
 A held session ends by letting go, and a key release that never arrives cannot
 happen. A toggle ends by pressing again, and a press that never arrives would
-leave the microphone open — so in that mode **Стоп**, the tray menu and the
+leave the microphone open — so in that mode **Stop**, the tray menu and the
 three-minute ceiling are what stop a recording. All three stay available for as
 long as it runs. That is why the switch is off by default.
 
@@ -177,14 +178,18 @@ forever.
 
 The panel has two tabs.
 
-**Диктовка** — the recognised text as it arrives, with the model name in the
-corner, the hold button, **Стоп**, **Копировать** and **Очистить**, and the hotkey
+**Dictation** — the recognised text as it arrives, with the model name in the
+corner, the hold button, **Stop**, **Copy** and **Clear**, and the hotkey
 in the footer. This tab does nothing configurable; it is the transcript.
 
-<img src="docs/img/panel-ru.png" width="46%" alt="WinVosk panel in Russian, showing a finished dictation: перенести файлы в дропбокс и отправить отчёт">
+<img src="docs/img/panel-ru.png" width="46%" alt="The WinVosk panel with the interface in Russian, showing a finished dictation">
 <img src="docs/img/panel-en.png" width="46%" alt="The same WinVosk window in English, after switching the interface language in place">
 
-**Настройки** — everything you can change. See below.
+**Settings** — everything you can change. The tab is taller than the window on a
+small screen, so it scrolls: the wheel over it, or the scrollbar, takes you down to
+**Start with Windows** and **Language** at the bottom. See below.
+
+<img src="docs/img/panel-settings.png" width="46%" alt="The Settings tab in Russian: the dictation key, the three switches, the word-list button, the startup entry and the language selector">
 
 The tray icon is the app's real home:
 
@@ -202,7 +207,7 @@ but not your document. Close the panel before you carry on.
 
 ## Settings, every one of them
 
-Everything below is on the **Настройки** tab. A change is saved the moment you
+Everything below is on the **Settings** tab. A change is saved the moment you
 make it and is in force immediately — no restart. If a setting cannot be saved,
 the checkbox goes back to what is really in effect and tells you why, rather
 than lying.
@@ -211,34 +216,34 @@ than lying.
 
 | Setting | What it does | Default |
 | --- | --- | --- |
-| **Печатать в активное окно** | types the recognised words at the caret of whatever window was in front, as they are recognised | **on** |
-| **Сразу копировать в буфер** | also copies each finished session to the clipboard | **off** |
-| **Исправлять свои слова** | replaces a near miss of one of your own words with your word | **on** |
+| **Type into the active window** | types the recognised words at the caret of whatever window was in front, as they are recognised | **on** |
+| **Copy to the clipboard right away** | also copies each finished session to the clipboard | **off** |
+| **Correct my own words** | replaces a near miss of one of your own words with your word | **on** |
 
-**Печатать в активное окно** off means nothing is typed anywhere: the session is
+**Type into the active window** off means nothing is typed anywhere: the session is
 still recognised, still shown in the panel and still written to
-`logs\YYYY-MM-DD.txt`, and **Копировать** is how you get it out.
+`logs\YYYY-MM-DD.txt`, and **Copy** is how you get it out.
 
-**Сразу копировать в буфер** overwrites the clipboard after every session, which
+**Copy to the clipboard right away** overwrites the clipboard after every session, which
 is worth leaving off unless something else in your workflow wants the text there.
 It is a one-way operation: other programs read from the clipboard, and this app
 still inserts text as keystrokes.
 
-**Исправлять свои слова** works from the words in `phrases.txt` — see
+**Correct my own words** works from the words in `phrases.txt` — see
 [Custom vocabulary](#custom-vocabulary-phrasestxt). It works on finished phrases
 only, never on the half-heard text, and every replacement is written to
 `logs\app.log` so you can see whether it is helping.
 
 ### Checking your own words
 
-The **Проверить свои слова** button under that checkbox asks the model which of
+The **Check my own words** button under that checkbox asks the model which of
 your words it can hear at all. It takes about a second and works from the tray —
 the panel does not have to be open. The detail is in
 [Custom vocabulary](#custom-vocabulary-phrasestxt).
 
 ### Startup
 
-**Автозапуск с Windows** — start at login, with no console and no panel. The
+**Start with Windows** — start at login, with no console and no panel. The
 equivalent from a shell:
 
 ```powershell
@@ -249,10 +254,17 @@ equivalent from a shell:
 
 ### Language
 
-**Русский** and **English**, applied at once. The panel, the tray menu, the
+**Russian** and **English**, applied at once. The panel, the tray menu, the
 notifications and the reports all repaint in the new language without a restart
 and without losing the text in the box, the recording state or the switch
 positions.
+
+**The interface ships in English**, because the shipped model is Russian but the
+panel is read by whoever installed it, and a language switch is much harder to
+find in a language you cannot read. Russian is one click away: **Settings** →
+**Language**. Every control name on this page is the English one — the strings
+`src\winvosk\text.py` actually holds. `README.ru.md` is the page that names them
+in Russian, and the two screenshots above show both.
 
 The choice is remembered in `settings.json`.
 
@@ -279,7 +291,7 @@ deliberate — it is the only way `Win` itself can be recorded — but it means 
 keyboard is inert for those few seconds. `Esc` ends it; quitting the app ends it
 too.
 
-**Сбросить** forgets your combination and brings back the two shipped defaults.
+**Reset** forgets your combination and brings back the two shipped defaults.
 
 A combination you wrote into `settings.json` by hand and got wrong is not
 taken out quietly either: the broken entry is dropped, the ones that work stay in
@@ -333,7 +345,7 @@ menu appears, the line above it names the key that got through.
   "copy_to_clipboard": false,
   "correct_words": true,
   "toggle_recording": false,
-  "language": "ru"
+  "language": "en"
 }
 ```
 
@@ -341,7 +353,7 @@ Nothing in that file can stop the app from starting. A missing, malformed or
 wrongly shaped file costs one line in `logs\app.log` and the defaults are used;
 a byte order mark (Notepad and PowerShell both add one) is read correctly; a
 combination that cannot be parsed costs only itself rather than crashing under
-`pythonw.exe` where nobody would see the traceback. **Сбросить** and
+`pythonw.exe` where nobody would see the traceback. **Reset** and
 deleting the file both restore the defaults.
 
 ### Settings that are not switches
@@ -379,17 +391,20 @@ questions.
 
 ### 1. Which of your words can the model hear?
 
-Press **Проверить свои слова** under **Исправлять свои слова** in
-**Настройки**. A window opens listing every phrase with a verdict:
+Press **Check my own words** under **Correct my own words** in
+**Settings**. A window opens listing every phrase with a verdict:
 
 ```
 phrases file: D:\AI\Vosk\phrases.txt  (7 phrase(s))
-heard by the model : 6
+heard by the model : 7
   ok      телеграм
   ok      фейсбук
   ok      дропбокс
-  MISSING йоцунфэнь
-unknown to the model: 1
+  ok      эмодзи
+  ok      йоцунфэнь
+  ok      востоков
+  ok      проверка связи
+unknown to the model: 0
 ```
 
 It takes about a second. The same check from a shell, if you prefer:
@@ -400,7 +415,26 @@ It takes about a second. The same check from a shell, if you prefer:
 
 **ok** means the word is in the model's vocabulary. **MISSING** means it is not,
 and no amount of configuration will change that at run time — see
-[If it recognises badly](#if-it-recognises-badly).
+[If it recognises badly](#if-it-recognises-badly). A list with something missing
+also says so in four extra lines, which is the only place in the app where the
+answer is a dead end:
+
+```
+phrases file: D:\AI\Vosk\phrases.txt  (7 phrase(s))
+heard by the model : 5
+  ok      телеграм
+  ok      фейсбук
+  ok      дропбокс
+  ok      эмодзи
+  ok      востоков
+unknown to the model: 2
+  MISSING йоцунфэнь
+  MISSING йоцунфень
+
+Words the model has never heard cannot be fixed at runtime.
+They need a language model rebuild, see README.md, section
+"Custom vocabulary", which needs a Kaldi build on Linux.
+```
 
 The check builds a throwaway recogniser from your phrases and reads vosk's own
 log, which lists every word it has to ignore. The model's vocabulary lives inside
@@ -409,9 +443,9 @@ us instead.
 
 ### 2. Which of your words does it hear *wrong*?
 
-**ok** does not mean the word comes out right. The model knows «дропбокс» and
-still prefers a different word for the same sound. That is an ambiguity, not a
-gap, and it is fixed **after** the decode rather than inside it:
+**ok** does not mean the word comes out right. The model knows the word and still
+prefers a different one for the same sound. That is an ambiguity, not a gap, and
+it is fixed **after** the decode rather than inside it:
 
 | It heard | You get | Why |
 | --- | --- | --- |
@@ -427,15 +461,17 @@ Rules worth knowing before you fill the file in:
 
 - **Words shorter than four letters are never touched.** A wrong correction on a
   short word is easy to miss and annoying to find.
-- **Anything more than about 0.75 similar is left alone.** That is what keeps
-  «подбоксник» and «дропбоксник» intact next to «дропбокс».
-- **Add the forms you actually say.** Russian inflects heavily: add `дропбоксы`
-  and `фейсбука` as their own lines rather than expecting one entry to cover them.
+- **A word further than about 0.75 similar from every entry is left alone.** The
+  cutoff is a floor, not a ceiling: a dropped letter scores 0.93, and catching it
+  is the whole point of it.
+- **A word that begins with a listed one is never touched.** That is an
+  inflection, not a mistake, and Russian inflects heavily — so add each form you
+  actually say as its own line rather than expecting one entry to cover them.
 - **Only finished phrases are corrected**, never the half-heard text, so the
   screen does not jump around for words the model has not settled on.
 - **Every replacement is logged**: `corrected 1 word(s): дропбок -> дропбокс` in
-  `logs\app.log`. If the list is getting in the way, that line is where you will
-  see it.
+  `logs\app.log`, one line listing every word it changed. If the list is getting in
+  the way, that line is where you will see it.
 
 Measured on the machine this was written on: against 500 random words the false
 replacement rate is about 0.03 %, and over 138 neighbouring word pairs in a real
@@ -452,8 +488,9 @@ is not something this app can do on Windows on demand.
 
 Practical answers while that is out of reach, in the order worth trying:
 
-1. **Rewrite the word** so it sounds like something the model knows — «фейсбук»
-   instead of «фейсбук мессенджер».
+1. **Rewrite the word** so it sounds like something the model knows — a bare brand
+   name rather than the full two-word phrase, which is what usually happens when a
+   term is longer than the model can hold.
 2. **Try a bigger model.** See [Models and languages](#models-and-languages).
 3. **Leave it.** Recognised forms show in the panel and in
    `logs\YYYY-MM-DD.txt`, so it is always visible what it actually heard.
@@ -481,7 +518,7 @@ real one.
 ### It types, but the wrong words
 
 1. **It is not your terminology.** That is what `phrases.txt` is for. Add the
-   words, press **Проверить свои слова**, read the verdict.
+   words, press **Check my own words**, read the verdict.
 2. **The small model.** `vosk-model-small-ru-0.22` is 44 MB and noticeably weaker
    on noisy or telephone audio. A bigger model in `models\` fixes most of it.
 3. **It is genuinely noisy.** The chip animates for anything above a gate, so a
@@ -501,9 +538,11 @@ afterwards, or dictate a line at a time.
 
 Two known shapes, both upstream behaviour rather than a fault here:
 
-- **A word split in two**: «друг бокс» instead of «дропбокс». The corrector glues
-  neighbouring tokens and compares the pair, which fixes this. A word split into
-  *three* tokens is out of reach — «йо цун фэнь» comes out as «йо цунфэнь».
+- **A word split in two**: the two halves of one word separated by a space, the
+  case in the table at the top of this section. The corrector glues neighbouring
+  tokens and compares the pair, which fixes this. A word split into *three*
+  tokens is out of reach — the first pair scores below the cutoff and the second
+  fires on its own, so you get a recognisable but wrong result.
 - **The same audio gives a different result twice.** Free decoding is a search,
   not a lookup; the acoustic score of two similar words is close.
 

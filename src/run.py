@@ -753,6 +753,13 @@ def _check_bundle() -> int:
             if not root.winfo_ismapped():
                 raise AssertionError("a tray click did not bring the panel up")
             lines.append("tray click  : brings the panel up")
+            panel._notebook.select(1)
+            for _ in range(4):
+                root.update_idletasks()
+                root.update()
+            lines.append(f"settings tab: {panel.check_settings_reachable()}")
+            panel._notebook.select(0)
+            root.update_idletasks()
             panel.hide()
             root.update_idletasks()
             panel._overlay.show()

@@ -171,10 +171,17 @@ Detail and rationale in `AGENTS.md` § Invariants worth keeping. In short:
 ## Documentation
 
 - `README.md` — the main page and the user guide: install, unpack, run, every
-  setting, `phrases.txt`, poor recognition, the 32 model languages
+  setting, `phrases.txt`, poor recognition, the 32 model languages. It is written
+  in English and is the page GitHub shows, so it names every control in English
+  and carries no Cyrillic outside a fenced block, a table row of input/output
+  pairs, or an inline code span quoting what a tool printed
 - `README.ru.md` — the same guide in Russian; edited as one document with
-  `README.md`, same headings in the same order, because a GitHub anchor comes
-  from the heading text
+  `README.md`, same sections in the same order and the same 39 headings, each in
+  its own language. A GitHub anchor comes from the heading text, so the anchors
+  are per-file and differ between the two: `#установка-и-запуск` here,
+  `#install-and-run` there. Keep them in step by section number, not by string
+- `docs\HOWTO.md` — English throughout, Cyrillic only as a quoted control name or
+  a quoted token; a Russian heading there is a defect
 - `docs\instructions\setup.md` — the install procedure as an ordered sequence,
   with the traps, in the repository and pointed at by `llms.txt`
 - `llms.txt` — the short map an agent reads first

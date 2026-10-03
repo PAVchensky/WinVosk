@@ -125,6 +125,11 @@ def panel_shots() -> list[Path]:
     panel.set_hotkey("Win+Ctrl+Right  /  Alt+Win")
     panel.set_text("перенести файлы в дропбокс и отправить отчёт", "")
     panel.set_status(text.t("status_ready"))
+    # Mapped, deliberately: `PrintWindow` hands back an unpainted bitmap for a
+    # window that was never shown, which `capture` then refuses — so the panel
+    # has to be up for the shot, and the capture is of the window itself either
+    # way. The app never does this on its own; `Panel` is built unmapped.
+    panel.present()
     _settle(panel._root)
     hwnd = _toplevel(panel._root)
 

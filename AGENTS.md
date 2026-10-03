@@ -21,7 +21,7 @@ repository.
 ## Release
 
 `VERSION` in `src\winvosk\config.py` is the single source of the release number,
-currently **1.1**. It is not a comment and not a tag nobody reads: `--diagnose`
+currently **1.3**. It is not a comment and not a tag nobody reads: `--diagnose`
 prints it on its first line, the panel puts it in the window title, and the
 own-word report and the frozen `--diagnose` dialog carry it.
 `winvosk\__init__.py` derives `__version__` from it rather than repeating it —
@@ -148,7 +148,7 @@ Get-Content .\logs\<yyyy-mm-dd>.txt -Encoding UTF8 -Tail 5
 Check 2 must print a `base dir` line that is the checkout root, currently
 `base dir    : D:\AI\Vosk`; anything else means the app resolved paths somewhere
 else and the rest of the bar is meaningless. Its first line must be
-`WinVosk   : 1.1`, which is the cheap way to notice that `VERSION` was not bumped.
+`WinVosk   : 1.3`, which is the cheap way to notice that `VERSION` was not bumped.
 
 Check 3 must print an empty string for silence, never raise. Check 4 must print
 `VERDICT: PASS` twice: once for the hotkey, once for typing, the latter with
@@ -158,7 +158,8 @@ part of the bar: `WARNING`, `ERROR` or any `hotkey hook failed` line means the
 change is not finished.
 
 Check 6 builds the real panel, resolves the `ttk` theme, checks that the window
-was never mapped at start up, that a tray click brings it up, that the chip maps
+was never mapped at start up, that a tray click brings it up, that the bottom of
+the settings tab is reachable, that the chip maps
 with its Pillow plate while the panel is in the tray, and that `Shell_NotifyIcon`
 accepts the notification-area icon, then reports. It is in
 the bar rather than optional because a bundle can be missing a Tcl script or a
@@ -289,7 +290,10 @@ and covers the message table and the language switch. Run it after any change to
   languages, and nothing else may hold one: `tools\lang_probe.py` fails on any
   Cyrillic string literal elsewhere. A language change repaints widgets in place,
   never by rebuilding the window — the caret, the recording state and the chip
-  would all have to be restored by hand.
+  would all have to be restored by hand. The interface starts in **English**
+  (`text.DEFAULT_LANGUAGE`, listed first in `LANGUAGES`) with Russian one click
+  away: the shipped model is Russian, but the panel is read by whoever installed
+  it, and a language switch is hardest to find in a language you cannot read.
 - **Only one instance may run.** Enforced by the `Local\WinVoskSingleInstance`
   mutex, because two instances fight over the microphone. A venv launch shows
   two processes in the task manager; that is the launcher shim, not a bug.
@@ -301,6 +305,19 @@ and covers the message table and the language switch. Run it after any change to
   tray, and check 6 asserts it. A modal dialog gets `parent` only while the panel
   is up, because a dialog parented to a withdrawn window comes up behind
   everything else or not at all.
+- **The settings tab must fit the window or scroll, never clip.** A `Frame` inside a
+  `ttk.Notebook` is laid out at its full requested height and simply runs off the
+  bottom of the window, so everything below the fold is never drawn and cannot be
+  clicked — and nothing in the app reads it back, so every check passed while
+  **Автозапуск с Windows** and the whole **Язык** group sat 200 px under the edge
+  of a 440 px window. `Panel._settings_page` puts the frame on a canvas with a
+  scrollbar, `_bind_wheel` binds the wheel on the page and its widgets rather than
+  with `bind_all` (which would also fire over the chip), `_toggle_scrollbar` shows
+  the scrollbar only while there is something to scroll to, and `_place` clamps the
+  window to the display so it can never be taller than the screen.
+  `Panel.check_settings_reachable` scrolls the tab to its end and asserts the last
+  line is on screen, and check 6 runs it, so the next label added there cannot go
+  missing this way.
 - **The Windows Search panel holds the foreground** and refuses to give it up.
   Verification probes must close it, and `cleanup.py` must run first or a
   leftover target keeps the focus. `cleanup.py` matches only python processes

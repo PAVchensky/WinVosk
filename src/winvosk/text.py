@@ -23,8 +23,14 @@ import logging
 
 log = logging.getLogger(__name__)
 
-DEFAULT_LANGUAGE = "ru"
-LANGUAGES = ("ru", "en")
+# English is the default: the shipped model is Russian, but the interface is
+# read by whoever installed it, and the first thing a new user has to find is
+# the language switch — which is a great deal harder to find in a language they
+# cannot read. Russian is one click away and stays one click away.
+DEFAULT_LANGUAGE = "en"
+# The default first: the selector lists them in this order, so the one that is
+# already active is the leftmost button.
+LANGUAGES = ("en", "ru")
 
 # Each language names itself in its own script, so the selector reads correctly
 # whichever language is active.

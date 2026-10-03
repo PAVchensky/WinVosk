@@ -96,6 +96,11 @@ def case_language_setting() -> bool:
         settings.SETTINGS_FILE = target
         try:
             ok = True
+            # The shipped default is a product decision, not an accident: the
+            # panel opens in English and Russian is one click away.
+            print(f"  shipped default         -> {config.LANGUAGE_DEFAULT!r}",
+                  flush=True)
+            ok = ok and config.LANGUAGE_DEFAULT == "en"
             for payload, label, expected in (
                 (None, "missing file", config.LANGUAGE_DEFAULT),
                 ('{"language": "en"}', "english", "en"),
@@ -137,9 +142,11 @@ def case_switching() -> bool:
                   flush=True)
             ok = ok and changed and text.language() == code and sample
         refused = text.set_language("de")
+        # The code that survived is the last one that was legal, whichever order
+        # `LANGUAGES` is in: the loop above left it there.
         print(f"  an unknown code is refused: {not refused}, kept "
               f"{text.language()!r}", flush=True)
-        ok = ok and not refused and text.language() == "en"
+        ok = ok and not refused and text.language() == text.LANGUAGES[-1]
         missing = text.t("no_such_key_at_all")
         print(f"  an unknown key returns itself, not a crash: {missing!r}", flush=True)
         ok = ok and missing == "no_such_key_at_all"
