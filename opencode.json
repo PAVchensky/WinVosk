@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "AGENTS.md",
+    "project.md"
+  ],
+  "permission": {
+    "skill": {
+      "*": "ask",
+      "mjd": "allow",
+      "prog": "allow"
+    },
+    "global_config_edit": "ask"
+  }
+}
+  

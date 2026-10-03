@@ -1,0 +1,36 @@
+﻿# The virtual environment: 102 MB, and the pins live in AGENTS.md instead.
+.venv/
+__pycache__/
+*.py[cod]
+
+# The speech model: 87 MB, and Vosk publishes it under its own licence.
+models/
+
+# Build output. dist\WinVosk\ is 172 MB and bundles someone else's libvosk,
+# libstdc++ and the Tcl script library; build\ is PyInstaller's work folder and
+# the generated WinVosk.ico. Both come out of tools\build_exe.py.
+dist/
+build/
+
+# Machine state, not part of a checkout.
+logs/
+tmp/
+backup/
+*.zip
+*.lnk
+settings.json
+settings.json.tmp
+
+# Local working notes: this machine's delivery process, not the product.
+STAGES.md
+stage_report.md
+history.md
+MEMORY.MD
+docs/instructions/
+docs/stages/
+docs/reports/
+
+# Windows noise.
+Thumbs.db
+desktop.ini
+.plan/
