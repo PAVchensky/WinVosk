@@ -63,12 +63,23 @@ a = Analysis(
         # ImportError, so a missing one is skipped rather than fatal. Only the
         # codecs the chip and the tray icon can reach are kept; see PRUNE in
         # `tools/build_exe.py` for the binaries that go with them.
+        #
+        # Two of these must stay, because the tray icon reaches them and nothing
+        # else in the app touches an image file at run time. pystray hands the
+        # drawn icon to `pystray._util.serialized_image(image, 'ICO')`, which
+        # writes a temporary `.ico` for `LoadImage`; `Image.save(format='ICO')`
+        # raises `KeyError: 'ICO'` unless `IcoImagePlugin` registers itself, and
+        # `IcoImagePlugin` imports `BmpImagePlugin` at module level. Prune either
+        # one and `Image.init()` swallows the ImportError, so 1.1 shipped with no
+        # tray icon at all - and, the failure being on a thread of pystray's own
+        # under `console=False`, nothing in the log said why. `--check-bundle`
+        # now waits for `Shell_NotifyIcon`, which is what catches it.
         "PIL.AvifImagePlugin", "PIL.JpegImagePlugin", "PIL.Jpeg2KImagePlugin",
         "PIL.WebPImagePlugin", "PIL.TiffImagePlugin", "PIL.GifImagePlugin",
-        "PIL.BmpImagePlugin", "PIL.PpmImagePlugin", "PIL.PcxImagePlugin",
+        "PIL.PpmImagePlugin", "PIL.PcxImagePlugin",
         "PIL.SgiImagePlugin", "PIL.SunImagePlugin", "PIL.QoiImagePlugin",
         "PIL.DdsImagePlugin", "PIL.FliImagePlugin", "PIL.MpoImagePlugin",
-        "PIL.HtJpegImagePlugin", "PIL.IbmImagePlugin", "PIL.IcoImagePlugin",
+        "PIL.HtJpegImagePlugin", "PIL.IbmImagePlugin",
         "PIL.PsdImagePlugin", "PIL.TgaImagePlugin", "PIL.EpsImagePlugin",
         "PIL.WmfImagePlugin", "PIL.FpxImagePlugin", "PIL.MicImagePlugin",
         "PIL.FtexImagePlugin", "PIL.HeifImagePlugin",

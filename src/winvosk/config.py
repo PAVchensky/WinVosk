@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -17,7 +18,7 @@ APP_NAME = "WinVosk"
 # number is written: `--diagnose` prints it, the panel shows it in its title and
 # `winvosk.__version__` derives from it, so a bug report can be tied to a build
 # without anyone reading a file.
-VERSION = "1.1"
+VERSION = "1.2"
 
 # True inside a PyInstaller bundle, where the modules sit in `_internal\` and
 # `__file__` no longer points at the folder the user keeps their files in.
@@ -145,3 +146,23 @@ def setup_logging(level: int = logging.INFO) -> None:
     root.addHandler(handler)
     root.setLevel(level)
     logging.getLogger("PIL").setLevel(logging.WARNING)
+    _log_thread_exceptions()
+
+
+def _log_thread_exceptions() -> None:
+    """Send an unhandled exception in any thread to the log, not to stderr.
+
+    A crash on the main thread is at least a non-zero exit code; one on a worker
+    thread is not, and Python reports it through `sys.stderr`. Under
+    `pythonw.exe`, and in a bundle built with `console=False`, `sys.stderr` is
+    `None`, so the report goes nowhere and the process carries on looking
+    healthy. That is how a tray icon could vanish - pystray adds the icon from
+    a thread of its own - with nothing in the log to say why.
+    """
+    def report(args: threading.ExceptHookArgs) -> None:
+        if args.exc_type is SystemExit:
+            return
+        log.error("unhandled exception in thread %s", args.thread.name,
+                  exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+
+    threading.excepthook = report

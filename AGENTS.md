@@ -158,8 +158,9 @@ part of the bar: `WARNING`, `ERROR` or any `hotkey hook failed` line means the
 change is not finished.
 
 Check 6 builds the real panel, resolves the `ttk` theme, checks that the window
-was never mapped at start up, that a tray click brings it up, and that the chip
-maps with its Pillow plate while the panel is in the tray, then reports. It is in
+was never mapped at start up, that a tray click brings it up, that the chip maps
+with its Pillow plate while the panel is in the tray, and that `Shell_NotifyIcon`
+accepts the notification-area icon, then reports. It is in
 the bar rather than optional because a bundle can be missing a Tcl script or a
 Pillow extension while every console flag still works: `import tkinter` succeeds
 long before the first `ttk` widget asks for its theme, and `from PIL import Image`
@@ -168,6 +169,15 @@ recording would find out, in front of the user. It opens no microphone, so it al
 runs on a machine with no input at all. Run it after any change to `WinVosk.spec`,
 `tools\build_exe.py`, `overlay.py`, `tray.py` or `panel.py`, and against the
 built exe as well as the checkout.
+
+The tray icon is the one part of check 6 that was missing until 1.2, and it is
+the part that cannot be reached any other way: `pystray.Icon.run_detached()` only
+starts a thread, the icon is added from a thread of pystray's own, and the panel
+lives in the tray — so a bundle whose icon never arrives has no user interface at
+all, while `import pystray` and every console flag report success. `tray.run()`
+therefore waits for `TrayIcon.visible` and logs a **warning** if it never arrives,
+and check 6 fails on it. Under `console=False` that warning is the only evidence
+there will be: see the next invariant.
 
 A plain `pythonw.exe` launch has no console, so the log file is the only
 diagnostic. Never trust a silent start.
@@ -322,6 +332,27 @@ and covers the message table and the language switch. Run it after any change to
   dead `_imagingft.pyd` or a live `tzdata` in place has to be visible in the
   build log. After touching `PRUNE`, `excludes` or the spec, rebuild and run
   check 6 against the built exe, not only against the checkout.
+- **Never prune a Pillow plugin that a plugin you keep imports.** This cost
+  1.1 its tray icon. `Image.init()` imports every plugin by name inside
+  `try/except ImportError` and says nothing when one is missing, so the module
+  is simply never registered and the failure surfaces much later as
+  `KeyError: 'ICO'` from `Image.save` — or not at all. `pystray` serialises the
+  tray glyph through `pystray._util.serialized_image(image, 'ICO')`, and
+  `IcoImagePlugin` imports `BmpImagePlugin` at module level; 1.1 excluded both,
+  because nothing else in the app touches an image file at run time. The build
+  itself could not have caught it: `tools\build_exe.py` draws the exe icon with
+  `make_icon(...).save(ICON, sizes=...)` on the build machine, where the plugin
+  is present. Before excluding a module, check what the modules you are keeping
+  import from it.
+- **An exception on a worker thread must reach the log.** Python reports those
+  through `threading.excepthook`, which writes to `sys.stderr` — and under
+  `pythonw.exe`, or any bundle built with `console=False`, `sys.stderr` is `None`.
+  The process then carries on looking healthy while a thread is dead.
+  `config.setup_logging()` installs an excepthook that logs instead, which is how
+  the missing tray plugin became a `logs\app.log` entry at all. `main()` catches
+  `Exception` around assembly, `start()` and the main loop for the same reason:
+  a windowless app that dies at start up must leave a traceback in the log and a
+  dialog on screen, never just vanish.
 - **What cannot be packed, and why.** No `.pyd` or `.dll` can go into an archive:
   the Windows loader opens them by path. Pure Python already is packed — the
   stdlib into `base_library.zip` and every other module into the `PYZ` inside

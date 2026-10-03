@@ -196,6 +196,19 @@ in front while you keep dictating, live typing is held back rather than typed
 anywhere: the words reach the panel and the diary, but not your document. Close
 the panel before you continue.
 
+**The icon is added by a thread, so nothing about it is instantaneous.**
+`TrayIcon.run()` calls `pystray.Icon.run_detached()`, which only starts a thread;
+pystray registers a window class, creates two hidden windows, and only then calls
+`Shell_NotifyIcon(NIM_ADD)` from a second thread of its own. `run()` therefore
+polls `TrayIcon.visible` for up to `tray.TRAY_READY_TIMEOUT` — a second on this
+machine — and logs `tray icon did not appear` as a **warning** if it never
+arrives. It is a warning and not a fatal error on purpose: pystray answers
+`WM_TASKBARCREATED`, so an icon lost to an Explorer restart comes back by itself.
+The reason this is worth a wait at all is that a missing icon is otherwise
+perfectly silent — the panel lives in the tray, so there is no way in — and
+pystray reports its own failures to a logger that has no handler and, in a
+`console=False` bundle, no `stderr` to fall back on.
+
 **The panel starts unmapped and stays that way.** `Panel.__init__` calls
 `withdraw()` on the root before a single widget is built, so the window is never
 mapped: nothing flashes on the way in, and a start that took the focus would send

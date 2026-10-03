@@ -675,12 +675,24 @@ def main(argv: list[str] | None = None) -> int:
     events: queue.Queue = queue.Queue()
     try:
         app = App(commands, events)
-    except FileNotFoundError as exc:
-        ctypes.windll.user32.MessageBoxW(None, str(exc), config.APP_NAME, 0x10)
+        log.info("app assembled in %.2fs", time.perf_counter() - started)
+        app.start()
+        app.run()
+    except Exception as exc:
+        # Anything escaping here kills the process, and a bundle built with
+        # console=False has no stderr for the traceback to reach: the app would
+        # be gone with no window, no tray icon and nothing in the log. Catching
+        # only FileNotFoundError is what let that happen. Log it, then say so
+        # where a person will see it - the log is the diagnostic, and a dialog
+        # is the only thing a windowless build can still put on screen.
+        log.exception("the app could not start")
+        _report([
+            f"{config.APP_NAME} {config.VERSION} could not start:",
+            f"{type(exc).__name__}: {exc}",
+            "",
+            f"The full traceback is in {config.LOG_FILE}",
+        ])
         return 2
-    log.info("app assembled in %.2fs", time.perf_counter() - started)
-    app.start()
-    app.run()
     return 0
 
 
@@ -708,7 +720,7 @@ def _check_bundle() -> int:
     console flag still works: `import tkinter` succeeds long before the first
     `ttk` widget asks for its theme, and `from PIL import Image` succeeds before
     the first `ImageTk.PhotoImage` asks for the extension. Only a recording would
-    find out, in front of the user. This finds out in three seconds, and it never
+    find out, in front of the user. This finds out in a few seconds, and it never
     opens the microphone, so it runs on a machine with no input at all.
 
     The real `Panel` is built rather than a couple of loose widgets, so the whole
@@ -724,6 +736,7 @@ def _check_bundle() -> int:
         import queue as queue_mod
 
         from winvosk.panel import Panel
+        from winvosk.tray import TrayIcon
 
         panel = Panel(queue_mod.Queue(), lambda: None)
         root = panel._root
@@ -768,6 +781,19 @@ def _check_bundle() -> int:
             panel._overlay.hide()
         finally:
             panel.destroy()
+        # The tray itself, last: the panel is the app's only way in, so a bundle
+        # whose notification-area icon never appears is a bundle with no user
+        # interface at all, and nothing above this line would have noticed.
+        tray = TrayIcon(queue_mod.Queue(), lambda: False)
+        try:
+            if not tray.run():
+                raise AssertionError(
+                    "Shell_NotifyIcon refused the tray icon: pystray imported and "
+                    "the panel built, but no icon reached the notification area"
+                )
+            lines.append(f"tray icon   : added by Shell_NotifyIcon, visible={tray.visible}")
+        finally:
+            tray.stop()
     except Exception as exc:
         lines.append(f"GUI         : FAILED — {type(exc).__name__}: {exc}")
         _report(lines)

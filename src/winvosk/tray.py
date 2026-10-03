@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import time
 from collections.abc import Callable
 
 import pystray
@@ -17,6 +18,14 @@ _IDLE_BG = (52, 58, 64, 255)
 _IDLE_FG = (228, 232, 236, 255)
 _ACTIVE_BG = (176, 42, 48, 255)
 _ACTIVE_FG = (255, 236, 236, 255)
+
+# How long to wait for `Shell_NotifyIcon` before calling the tray dead, and how
+# often to look. The call itself lands in a thread of pystray's own, on the far
+# side of a window class registration and two hidden windows, so it is not
+# immediate: measured on this machine, a second. Five covers a loaded machine
+# without turning a slow tray into a hang.
+TRAY_READY_TIMEOUT = 5.0
+TRAY_POLL_INTERVAL = 0.05
 
 
 def make_icon(recording: bool = False, size: int = 64) -> Image.Image:
@@ -120,9 +129,45 @@ class TrayIcon:
             ),
         )
 
-    def run(self) -> None:
+    def run(self) -> bool:
+        """Put the icon up, and say whether it actually arrived.
+
+        `run_detached` returns as soon as it has started a thread, so logging
+        straight after it says nothing: `Shell_NotifyIcon` still has to run, and
+        pystray reports a refusal to a logger that has no handler and, in a
+        windowless bundle, no stderr to fall back on. A dead tray is the worst
+        failure this app has — the panel lives in the tray, so there would be no
+        way in at all — which is why it is waited for and logged rather than
+        assumed.
+
+        A missing icon is a warning, not a fatal error. pystray answers
+        `WM_TASKBARCREATED`, so an icon lost to an Explorer restart comes back on
+        its own, and killing the app over it would turn a transient into an
+        outage.
+        """
         self._icon.run_detached()
-        log.info("tray icon started")
+        deadline = time.monotonic() + TRAY_READY_TIMEOUT
+        while time.monotonic() < deadline:
+            if self.visible:
+                log.info("tray icon started")
+                return True
+            time.sleep(TRAY_POLL_INTERVAL)
+        log.warning(
+            "tray icon did not appear within %.1fs: Shell_NotifyIcon never "
+            "accepted it, so the panel cannot be reached from the tray",
+            TRAY_READY_TIMEOUT,
+        )
+        return False
+
+    @property
+    def visible(self) -> bool:
+        """Whether the notification area holds the icon right now.
+
+        `pystray.Icon.visible` is set once its own setup thread has asked the
+        shell to add the icon, so this is the only honest answer available from
+        inside the process. It is also what a build check can assert on.
+        """
+        return bool(self._icon.visible)
 
     def set_recording(self, recording: bool) -> None:
         try:
