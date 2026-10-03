@@ -29,12 +29,13 @@ Start it with `WinVosk.bat`, or let Windows start it on login.
 | End it without letting go | **Stop** in the panel, or tray → **Stop recording** |
 | Copy the result | the **Copy** button or the tray menu |
 | Open the panel | left click the tray icon, or tray → **Show the panel** |
-| Hide the panel | tray → **Скрыть панель**, or just close the window — it goes to the tray |
+| Hide the panel | tray → **Hide the panel**, or just close the window — it goes to the tray |
 | Change the hotkey | panel → **Settings** tab, see [Settings](#settings) |
 | Record on press instead of hold | panel → **Settings** → **Toggle recording** |
 | Type or not, clipboard, autostart | panel → **Settings** tab, see [Where the text goes](#where-the-text-goes) |
+| Light or dark | panel → **Settings** → **Dark theme**, see [Appearance](#appearance) |
 | Teach it your own words | put them in `phrases.txt`, see [Custom vocabulary](#custom-vocabulary) |
-| Quit | tray menu → **Выход** |
+| Quit | tray menu → **Quit** |
 
 Recording runs for exactly as long as the keys are held, which is the shipped
 default: release and the session closes, the text is written to
@@ -243,7 +244,9 @@ Vosk\                             the checkout folder, the project itself is Win
 │       ├── keystrokes.py      text typed with KEYEVENTF_UNICODE keystrokes
 │       ├── vocabulary.py      phrase file loader and vocabulary check
 │       ├── panel.py           always-on-top Tk panel, two tabs
-│       ├── overlay.py         recording chip: eleven bars over an elapsed clock
+    │       ├── theme.py           palettes, spacing and type scales, window dressing
+    │       ├── widgets.py         the panel's own widgets: cards, buttons, switches
+    │       ├── overlay.py         recording chip: eleven bars over an elapsed clock
 │       ├── settings.py        settings.json: hotkey, switches, atomic write
 │       ├── corrector.py       own-word correction after the decode
 │       ├── text.py            every user visible string, ru and en
@@ -566,8 +569,9 @@ what is answered.
 The panel has two tabs. **Dictation** is the transcription itself, unchanged.
 **Settings** holds the combination that starts a recording, three switches — where
 the text goes, whether it also lands in the clipboard, whether your own words are
-corrected — whether Windows starts the app, and the language. Everything on that
-tab is written at once, on the click, and is in force immediately.
+corrected — whether Windows starts the app, the light or dark theme, and the
+language. Everything on that tab is written at once, on the click, and is in force
+immediately.
 
 ### Where the text goes
 
@@ -575,7 +579,7 @@ Four switches, and they are independent of each other:
 
 | Switch | Meaning | Default |
 | --- | --- | --- |
-| **Печатать в активное окно** | the recognised words are typed at the caret of whatever window was in front, as they are recognised | on |
+| **Type into the active window** | the recognised words are typed at the caret of whatever window was in front, as they are recognised | on |
 | **Copy to the clipboard right away** | every finished session is also copied to the clipboard | off |
 | **Correct my own words** | a word the model heard as something close to one of yours is replaced by yours | on |
 | **Start with Windows** | the app starts at login, with no console and no panel | off |
@@ -613,6 +617,17 @@ A switch that cannot be saved puts itself back where it was and says why under
 the switches: a failed write leaves the previous value on the disk, and a failed
 registry write is reported with the checkbox restored to what the Run key really
 holds. The switch is never left showing something that is not in effect.
+
+### Appearance
+
+**Dark theme** repaints the panel, the recording chip and the tray icon in the
+other palette. It is the one setting that rebuilds the page rather than
+reconfiguring it — every widget is destroyed and made again, which is why
+`set_theme` is the only language- or theme-shaped change that has to restore the
+transcript, the recording state and the switch positions by hand. The stored
+value is a plain string, `light` or `dark`, checked against `config.THEMES`
+rather than accepted as anything: an unknown name falls back to
+`config.THEME_DEFAULT`, which is `light`.
 
 ### Language
 
@@ -668,7 +683,7 @@ combination, and the field, the footer and the tray header show it alone.
 
 ### Where the settings are stored
 
-In `settings.json` in the project root, six keys:
+In `settings.json` in the project root, seven keys:
 
 ```json
 {
@@ -679,7 +694,8 @@ In `settings.json` in the project root, six keys:
   "copy_to_clipboard": false,
   "correct_words": true,
   "toggle_recording": false,
-  "language": "ru"
+  "language": "en",
+  "theme": "light"
 }
 ```
 

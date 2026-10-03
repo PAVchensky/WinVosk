@@ -2,55 +2,87 @@
   <img src="docs/img/WinVosk_banner.png" alt="WinVosk — offline dictation for Windows" width="720">
 </p>
 
-# WinVosk
+<h1 align="center">WinVosk</h1>
 
-Offline dictation for Windows. Hold a key combination, speak, let go — and the
-recognised text is typed straight into the window you were typing in, at the
-caret, in Russian or English.
+<p align="center">
+  Offline speech-to-text for Windows. Hold a hotkey, speak, release — WinVosk types the recognised text straight into the active application.
+</p>
 
-Nothing leaves the machine. There is no account, no telemetry and no network
-call of any kind: the speech model runs locally, on the CPU, through the
-[Vosk](https://github.com/alphacep/vosk-api) decoder.
+<p align="center">
+  <a href="https://github.com/PAVchensky/WinVosk/releases">
+    <img src="https://img.shields.io/github/v/release/PAVchensky/WinVosk?style=flat-square" alt="Latest release">
+  </a>
+  <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4?style=flat-square" alt="Windows x64">
+  <img src="https://img.shields.io/badge/Python-3.14-3776AB?style=flat-square" alt="Python 3.14">
+  <img src="https://img.shields.io/badge/Vosk-0.3.45-111111?style=flat-square" alt="Vosk 0.3.45">
+  <img src="https://img.shields.io/badge/network-none-2EA44F?style=flat-square" alt="No network">
+  <img src="https://img.shields.io/github/license/PAVchensky/WinVosk?style=flat-square" alt="License">
+</p>
 
-```
-Python 3.14 · vosk 0.3.45 · Vosk models for 32 languages
-Windows x64 · no installer · no admin rights · one folder
-```
+<p align="center">
+  <a href="README.ru.md">Русская версия</a>
+</p>
 
-**Read this in Russian: [README.ru.md](README.ru.md)**
+> **Private by design:** speech recognition runs locally on your CPU. No account,
+> telemetry, cloud API or network call is required.
 
-- **Push to talk by default, toggle if you prefer.** Recording lasts exactly as
-  long as you hold the keys — or one press starts it and the next one stops it,
-  if you turn on **Toggle recording**. See
-  [Recording mode](#recording-mode).
-- **Layout independent.** Text is typed as `KEYEVENTF_UNICODE` keystrokes, so
+---
+
+## TL;DR
+
+- **Needs:** Windows x64, a microphone, about 90 MB of disk. Nothing else.
+- **Does not need:** an installer, administrator rights, a Python of your own —
+  the release carries its own — or a network connection.
+- **Is:** one folder. `WinVosk.exe`, `_internal\`, `models\`. Nothing is
+  registered with Windows unless you ask for autostart.
+- **Knows:** Russian out of the box, and any of the 32 languages Vosk publishes a
+  model for, by dropping that model into `models\`.
+- **Fixes:** your own terminology, from a plain text list you edit yourself.
+- **Types** at the caret of the window you were in, as Unicode keystrokes —
+  never through the clipboard, never as a paste.
+- **Starts** in the tray: no window, no console, no focus taken from whatever
+  you were typing in.
+- **When it goes wrong:** `--diagnose` names the model, the folder, the device
+  and every switch; `logs\app.log` says what happened. Recognition itself is
+  [Vosk](https://github.com/alphacep/vosk-api) running on the CPU.
+
+## Features
+
+- 🎯 **Push to talk by default, toggle if you prefer.** Recording lasts exactly
+  as long as you hold the keys — or one press starts it and the next one stops
+  it. See [Recording mode](#recording-mode).
+- ⌨️ **Layout independent.** Text is typed as `KEYEVENTF_UNICODE` keystrokes, so
   Russian comes out right with a Latin layout selected. The clipboard is never
   used to insert anything.
-- **Your own words.** A plain text list fixes the words the model keeps
-  mishearing — see [Custom vocabulary](#custom-vocabulary-phrasestxt).
-- **No console, ever.** Tray icon, panel, chip. `--diagnose` writes a report you
-  can read in Notepad if you ever need one.
+- 🧾 **Your own words.** A plain text list fixes the words the model keeps
+  mishearing — see [Custom Vocabulary](#custom-vocabulary-phrasestxt).
+- 🕶️ **No console, ever.** Tray icon, panel, chip. `--diagnose` writes a report
+  you can read in Notepad if you ever need one.
+- 🌍 **Any model.** Russian ships; the other 31 are one folder away — see
+  [Models and Languages](#models-and-languages).
 
 ---
 
 ## Contents
 
-1. [Install and run](#install-and-run)
-2. [How to dictate](#how-to-dictate)
-3. [The panel and the tray](#the-panel-and-the-tray)
-4. [Settings, every one of them](#settings-every-one-of-them)
-5. [Custom vocabulary (`phrases.txt`)](#custom-vocabulary-phrasestxt)
-6. [If it recognises badly](#if-it-recognises-badly)
-7. [Models and languages](#models-and-languages)
-8. [What it deliberately does not do](#what-it-deliberately-does-not-do)
-9. [Files and folders](#files-and-folders)
-10. [When something goes wrong](#when-something-goes-wrong)
-11. [Building from source](#building-from-source)
-12. [Upstream](#upstream)
+1. [TL;DR](#tldr)
+2. [Features](#features)
+3. [Install and Run](#install-and-run)
+4. [How to Dictate](#how-to-dictate)
+5. [The Panel and Tray](#the-panel-and-tray)
+6. [Settings](#settings)
+7. [Custom Vocabulary (`phrases.txt`)](#custom-vocabulary-phrasestxt)
+8. [Troubleshooting Recognition](#troubleshooting-recognition)
+9. [Models and Languages](#models-and-languages)
+10. [What WinVosk Does Not Do](#what-winvosk-does-not-do)
+11. [Files and Folders](#files-and-folders)
+12. [Diagnostics](#diagnostics)
+13. [Building from Source](#building-from-source)
+14. [Upstream](#upstream)
 
 ---
 
-## Install and run
+## Install and Run
 
 ### The ready-made folder
 
@@ -119,7 +151,7 @@ Use `pythonw.exe` instead of `python.exe` for a start with no console window.
 
 ---
 
-## How to dictate
+## How to Dictate
 
 | I want to | Do this |
 | --- | --- |
@@ -146,7 +178,7 @@ into your document and not into the chip.
 <img src="docs/img/chip.gif" width="348" alt="The recording chip: eleven thin pink bars over an elapsed clock, animating while a recording is running">
 
 **You can change the combination** in **Settings**; see
-[Settings](#settings-every-one-of-them).
+[Settings](#settings).
 
 ### Recording mode
 
@@ -174,7 +206,7 @@ forever.
 
 ---
 
-## The panel and the tray
+## The Panel and Tray
 
 The panel has two tabs.
 
@@ -196,7 +228,7 @@ The tray icon is the app's real home:
 | Action | Result |
 | --- | --- |
 | left click | open the panel and focus it |
-| right click | the menu: hold-to-dictate hint, stop, show/hide panel, copy, clear, quit |
+| right click | the menu: the **Hold** hint, **Stop recording**, **Show the panel**, **Hide the panel**, **Copy the text**, **Clear**, **Quit** |
 
 Note that a left click **takes the focus** — that is deliberate, you asked for the
 panel. If the panel is left in front while you dictate, live typing is held back
@@ -205,7 +237,8 @@ but not your document. Close the panel before you carry on.
 
 ---
 
-## Settings, every one of them
+<a id="settings-every-one-of-them"></a>
+## Settings
 
 Everything below is on the **Settings** tab. A change is saved the moment you
 make it and is in force immediately — no restart. If a setting cannot be saved,
@@ -233,6 +266,15 @@ still inserts text as keystrokes.
 [Custom vocabulary](#custom-vocabulary-phrasestxt). It works on finished phrases
 only, never on the half-heard text, and every replacement is written to
 `logs\app.log` so you can see whether it is helping.
+
+### Appearance
+
+**Dark theme** — the panel, the chip and the tray icon repaint in the other
+palette. It is stored in `settings.json` as `theme`, `light` or `dark`, and the
+machine gets the light one until it says otherwise. Nothing else changes: the
+transcript, the recording state and the switch positions all survive a switch the
+way they survive a language change, and the switch itself is in force
+immediately.
 
 ### Checking your own words
 
@@ -273,8 +315,8 @@ language being dictated — see [Models and languages](#models-and-languages).
 
 ### Dictation key
 
-Click the field and press the combination you want. It is validated, saved and
-taken into use immediately. `Esc` cancels.
+Click the **Dictation key** field and press the combination you want. It is
+validated, saved and taken into use immediately. `Esc` cancels.
 
 Three things are refused, each with the reason shown under the field:
 
@@ -345,7 +387,8 @@ menu appears, the line above it names the key that got through.
   "copy_to_clipboard": false,
   "correct_words": true,
   "toggle_recording": false,
-  "language": "en"
+  "language": "en",
+  "theme": "light"
 }
 ```
 
@@ -370,7 +413,7 @@ These live in `src\winvosk\config.py` and need an editor:
 
 ---
 
-## Custom vocabulary (`phrases.txt`)
+## Custom Vocabulary (`phrases.txt`)
 
 `phrases.txt`, next to the exe, is your own word list. One word or phrase per
 line, no punctuation, `#` starts a comment:
@@ -415,7 +458,7 @@ It takes about a second. The same check from a shell, if you prefer:
 
 **ok** means the word is in the model's vocabulary. **MISSING** means it is not,
 and no amount of configuration will change that at run time — see
-[If it recognises badly](#if-it-recognises-badly). A list with something missing
+[If it recognises badly](#troubleshooting-recognition). A list with something missing
 also says so in four extra lines, which is the only place in the app where the
 answer is a dead end:
 
@@ -497,7 +540,8 @@ Practical answers while that is out of reach, in the order worth trying:
 
 ---
 
-## If it recognises badly
+<a id="if-it-recognises-badly"></a>
+## Troubleshooting Recognition
 
 Work down this list; it is ordered by how often each cause turns out to be the
 real one.
@@ -567,7 +611,7 @@ driver. Check the native rate before blaming the app.
 
 ---
 
-## Models and languages
+## Models and Languages
 
 WinVosk ships with **Russian** (`vosk-model-small-ru-0.22`, 44 MB). Vosk
 publishes models for **32 languages**, and any of them can be dropped into
@@ -678,7 +722,8 @@ Notes:
 
 ---
 
-## What it deliberately does not do
+<a id="what-it-deliberately-does-not-do"></a>
+## What WinVosk Does Not Do
 
 - **Your hotkey takes its combination away from Windows while the app
   runs.** That is the point: it is what stops the shortcut from firing behind
@@ -700,7 +745,7 @@ Notes:
 
 ---
 
-## Files and folders
+## Files and Folders
 
 | Path | What it is | Safe to delete? |
 | --- | --- | --- |
@@ -724,7 +769,8 @@ required by anything and can be deleted freely.
 
 ---
 
-## When something goes wrong
+<a id="when-something-goes-wrong"></a>
+## Diagnostics
 
 ```powershell
 .\WinVosk.exe --diagnose
@@ -759,22 +805,56 @@ in [`docs/HOWTO.md`](docs/HOWTO.md).
 
 ---
 
-## Building from source
+## Building from Source
 
-Needs Python 3.14 and the five pinned packages. From the project root:
+Needs Windows x64 and Python 3.14, which builds the virtual environment. From the
+project root:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install vosk==0.3.45 sounddevice==0.5.6 `
-    pystray==0.19.5 Pillow==12.3.0 pyperclip==1.11.0
-.\.venv\Scripts\python.exe .\tools\build_exe.py
+py -3.14 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-That writes `dist\WinVosk\` — one folder, no console, with the model copied next
-to the exe. `WinVosk.spec` keeps vosk's unused streaming client out of the bundle
-in the first place; `build_exe.py` then prunes `_internal\` of what is left that
-the app cannot reach — unused Pillow codecs, wheel metadata, two dead Tcl
-directories and Tcl's 609-file timezone database — and reports every pattern
-that matched nothing, so an upstream rename cannot pass unnoticed.
+If `WinVosk.bat` prints "Virtual environment is missing", it names the five pins
+it expects, and they are exactly the ones in `requirements.txt`. Do not install a
+newer or looser `vosk` to "fix" something: the recogniser contract this app is
+built on — `Result()` and `PartialResult()` reporting the whole open utterance,
+and `SetWords` being a boolean for timestamps — is what 0.3.45 does.
+
+`models\` ships empty and the app starts without one; it will simply refuse to
+open the microphone and log that no model was found. To get the small Russian
+model this repository is verified against:
+
+```powershell
+New-Item -ItemType Directory -Path .\tmp -Force | Out-Null
+curl.exe -L -o .\tmp\m.zip https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
+Expand-Archive .\tmp\m.zip .\models -Force
+```
+
+The official host throttles on some networks; the Hugging Face mirror in
+[Models and Languages](#models-and-languages) serves the same archive.
+
+Build the exe, then stage the release archive:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe .\tools\build_exe.py        # dist\WinVosk\
+.\.venv\Scripts\python.exe .\tools\package_release.py   # the release zip
+```
+
+`build_exe.py` writes `dist\WinVosk\` — one folder, no console, with the model
+copied next to the exe — and that is the folder you want locally, your own
+`phrases.txt` included. `package_release.py` produces the archive meant for other
+people: it removes `phrases.txt`, the settings and the log, adds `licenses\`,
+`LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md` and `phrases.example.txt`, and
+prints the SHA-256. The licence texts have to travel with it, because the build
+ships Apache-2.0 code, the GCC runtime and the PyInstaller bootloader.
+
+`WinVosk.spec` keeps vosk's unused streaming client out of the bundle in the
+first place; `build_exe.py` then prunes `_internal\` of what is left that the app
+cannot reach — unused Pillow codecs, wheel metadata, two dead Tcl directories and
+Tcl's 609-file timezone database — and reports every pattern that matched nothing,
+so an upstream rename cannot pass unnoticed.
 
 Check a build without starting it:
 

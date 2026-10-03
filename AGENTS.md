@@ -58,8 +58,9 @@ repository at all: the shipped template is `phrases.example.txt`.
 
 ## Documentation
 
-Three documents, and they do different jobs. Do not merge them and do not let
-them drift apart.
+Four tracked documents, and they do different jobs. Do not merge them and do not
+let them drift apart. Anything not in this list is not a document of the product:
+marketing notes and this machine's delivery records are local and gitignored.
 
 - **`README.md`** — the main page and the user guide, in English: install,
   unpack, run, every setting, `phrases.txt`, what to do when recognition is poor,
@@ -74,12 +75,14 @@ them drift apart.
   by string; `tools\readme_probe.py` is what notices when one file gains a section
   and the other does not. Same rule for the tables and the numbered sections. When
   you change one, change the other in the same commit, or one of them is a lie.
+  **A renamed heading keeps its old anchor** in an `<a id="...">` line above it,
+  because links to a README outlive the text they were written against; there are
+  four of them and `readme_probe.py` fails if one is lost.
 - **`docs\HOWTO.md`** — the reference, in English: internals, layout, why each
   design decision was taken, the verification helpers, the caveats.
-- **`llms.txt`** and **`docs\instructions\setup.md`** — the short map an agent
-  reads first, and the install procedure behind it as an ordered sequence with
-  the traps. Both point at `README.md`, this file and `project.md` rather than
-  repeating them.
+- **`llms.txt`** — the short map an agent reads first: what the project is and
+  which of the other three files to open. It points rather than repeats, because a
+  copy of the verification commands here is a copy that can go stale.
 
 `AGENTS.md` is agent-facing and `project.md` is project context; neither is a
 user guide. When a change makes a statement in any of them untrue, fix the

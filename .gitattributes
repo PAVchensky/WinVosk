@@ -39,3 +39,11 @@
 *.conf    binary
 *.int     binary
 *.txt     binary
+
+# ...except the two text files in the tree. The glob above exists because the
+# bundle carries Tcl data and locale files as .txt, not because a hand written
+# template and an agent map are binary: without these two lines git refuses to
+# diff them, so a typo in the shipped word-list template or in llms.txt is
+# invisible in review and lands unreviewed.
+llms.txt            text eol=lf -binary
+phrases.example.txt text eol=lf -binary

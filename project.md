@@ -18,7 +18,7 @@ upstream, dictation behaviour bugs go here.
 
 - Type: Software, local desktop application (Windows, x64)
 - Audience: a single user on a private machine; no network calls, no telemetry
-- Language of code and artifacts: English. The interface is Russian or English, chosen in Настройки; phrases.txt and the diary are the user's own
+- Language of code and artifacts: English. The interface is Russian or English, chosen in the Settings tab; phrases.txt and the diary are the user's own
 - Entry points: `WinVosk.bat` (launcher), `src\run.py` (console),
   `pythonw.exe` (windowless, autostart), `dist\WinVosk\WinVosk.exe` (built,
   windowless, same code)
@@ -106,108 +106,28 @@ Run everything from the project root with the venv interpreter.
 .\.venv\Scripts\python.exe .\tools\build_exe.py        # build dist\WinVosk\
 ```
 
-## Verification
+## Rules
 
-The standing bar is the six checks in `AGENTS.md` § Verification:
-`compileall`, `--diagnose` (its `base dir` line must be the checkout root, and
-its first line the release number), `file_transcribe.py --self-test`,
-`cleanup.py` + `hold_probe.py` + `typing_probe.py` (two `VERDICT: PASS`, typing
-with `focus drift 0`), one real dictation producing a new
-`logs\YYYY-MM-DD.txt` line plus `typed N character(s)` in `logs\app.log`, and
-`--check-bundle`, which builds a window, resolves the `ttk` theme and draws the
-chip without opening a microphone. A `WARNING`, `ERROR` or `hotkey hook failed`
-line in `app.log` means the change is not finished. Checks 4 and 5 need a human
-at the keyboard and cannot be automated — an agent session has no foreground
-window at all, so `SendInput` injects nothing and the probes cannot pass there.
+The verification bar, the invariants and the release procedure are **not** repeated
+here. They are stated once, in `AGENTS.md`, and a second copy is a second thing to
+forget \u2014 the two files did disagree about the heading rule until this was cut:
 
-`tools\settings_probe.py`, `tools\correct_probe.py`, `tools\lang_probe.py` and
-`tools\readme_probe.py` are headless checks that are not part of that bar: they
-need no GUI, microphone, model load or real hook, print `VERDICT: PASS`/`FAIL`,
-and cover the key-name mapping and the spec round trip, the capture rules, the
-`settings.json` fallbacks including the switches and a byte order mark, that
-leaving the capture hands the keyboard back, the own-word correction rules and
-their cost, the message table — including that no string literal containing
-Cyrillic exists outside `winvosk\text.py` — and the three GitHub-facing pages:
-dead anchors, Cyrillic that escaped into English prose, control names that no
-longer match `text.py`, a `settings.json` example that names the wrong shipped
-language, the corrector cutoff stated backwards, and heading parity between the
-two guides.
-
-## Invariants
-
-Detail and rationale in `AGENTS.md` § Invariants worth keeping. In short:
-
-- never add the `keyboard` package — its Windows backend never delivers hotkeys
-- never insert text through the clipboard, and never type into this app's own
-  window; copying text out to the clipboard is a separate, optional step
-- never take PortAudio's default input device on trust: it answers
-  `paNoDevice` on this machine, and the only input device it exposes takes its
-  native rate, not 16 kHz — `recognizer.input_device()` resolves the index
-- a settings switch is written only by the app, from the value the panel just
-  set, and a failed write puts the switch back to what is really in effect
-- every user visible string lives in `winvosk\text.py` as a key with both
-  languages; a language change repaints the widgets in place and never rebuilds
-  the window
-- the recording chip is a decorative animation, not a level meter, and it must never
-  take focus: a stolen focus sends the dictated words into the chip instead of the user's document
-- the hotkey is push to talk, never a toggle; the main key alone is blocked
-- while the hotkey capture is live the hook swallows every key system wide, and
-  every exit from it must hand the keyboard back
-- a stored hotkey is never handed to the hook unparsed, and a failed registration
-  rolls back to the previous combination instead of leaving no hotkey at all
-- never pass a phrase list to `KaldiRecognizer` during dictation — a grammar is a hard restriction
-- the correction pass touches finished utterances only, never partials, and never a
-  word that is an inflection of one the user listed
-- vosk 0.3.45 has no word boosting: `SetWords` is a boolean for word timestamps,
-  so an own-word correction has to happen after the decode
-- apply every Vosk revision as a diff against what was already typed
-- the `INPUT` struct must stay 40 bytes on x64
-- one instance only, enforced by the `Local\WinVoskSingleInstance` mutex
-- download models from the HuggingFace mirror; `alphacephei.com` throttles
-- a Russian model wins but any Kaldi model is accepted, so the language table in
-  `README.md` is real; the `ru` test is a whole hyphen separated token, never a
-  substring, which is what keeps `uz` out
-- never name a local `text` in a module that imports `winvosk.text`; the shadow
-  only bites on an error path, under `pythonw.exe`, in front of nobody
-- never collect `vosk` with `collect_all`: `vosk.transcriber` is a server client
-  and drags the TLS stack in with it
-- a prune pattern in `tools\build_exe.py` that matched nothing is reported, not
-  noise, and `--check-bundle` is what proves a prune did not go too far
-- nothing in `_internal` can be packed: no `.pyd`/`.dll` can live in an archive
-  and Tk finds its scripts as files on disk
+- `AGENTS.md` \u00a7 Verification \u2014 the six checks every change must clear
+- `AGENTS.md` \u00a7 Invariants worth keeping \u2014 each rule with the reason it exists
+- `AGENTS.md` \u00a7 Release \u2014 what a release is, and how `VERSION` works
 
 ## Documentation
 
-- `README.md` — the main page and the user guide: install, unpack, run, every
-  setting, `phrases.txt`, poor recognition, the 32 model languages. It is written
-  in English and is the page GitHub shows, so it names every control in English
-  and carries no Cyrillic outside a fenced block, a table row of input/output
-  pairs, or an inline code span quoting what a tool printed
-- `README.ru.md` — the same guide in Russian; edited as one document with
-  `README.md`, same sections in the same order and the same headings at the same
-  levels, each in its own language. A GitHub anchor comes from the heading text, so
-  the anchors are per-file and differ between the two: `#установка-и-запуск` here,
-  `#install-and-run` there. Keep them in step by section number, not by string.
-  `tools\readme_probe.py` is what notices when one file gains a heading and the
-  other does not
-- `docs\HOWTO.md` — English throughout, Cyrillic only as a quoted control name or
-  a quoted token; a Russian heading there is a defect
-- `docs\instructions\setup.md` — the install procedure as an ordered sequence,
-  with the traps, in the repository and pointed at by `llms.txt`
-- `llms.txt` — the short map an agent reads first
-- `AGENTS.md` — authoritative agent-facing notes, verification bar, invariants
-- `docs\HOWTO.md` — the reference: internals, layout, design rationale, probes
-- `project.md` — this file: project context
-- `STAGES.md` — stage tracking, local to this checkout and not published
-- Project knowledge and decisions live in SynaptoMind, project `Vosk`
-  (`local_path` `D:/AI/Vosk`), not in this tree
+Four tracked documents, one job each. The rules for keeping them in step are in
+`AGENTS.md` \u00a7 Documentation.
 
-`STAGES.md`, `history.md` and `MEMORY.MD` are stage/history records: append,
-do not rewrite. They are listed in `.gitignore` along with the four
-`docs\instructions\` files that are agent prompts rather than product
-documentation — `build.md`, `plan.md`, `review.md`, `debug.md` — and with
-`docs\stages\`, because they record this machine's delivery process rather
-than the product, so they stay out of the published repository while staying on
-disk here. `setup.md` is the exception and is tracked. Before 2026-10-02 this
-file described an unrelated project
-(Teleread, Python 3.4, server `mjd`); that text was stale and has been replaced.
+- `README.md` \u2014 the page GitHub shows, and the user guide, in English
+- `README.ru.md` \u2014 the same guide in Russian: same sections in the same order,
+  its own anchors
+- `docs\HOWTO.md` \u2014 the English reference: internals, layout, probes, caveats
+- `llms.txt` \u2014 the short map an agent reads first
+
+Marketing and delivery records are not in the repository. `docs\competitors.md` and
+`docs\seo_keywords.md` are local working notes, `docs\instructions\` holds agent
+prompts rather than product documentation, and `STAGES.md` is this machine's stage
+log.
