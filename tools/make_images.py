@@ -91,7 +91,19 @@ def capture(hwnd: int) -> Image.Image:
         gdi32.DeleteObject(bitmap)
         gdi32.DeleteDC(memory_dc)
         user32.ReleaseDC(hwnd, window_dc)
-    return Image.frombuffer("RGBA", (width, height), buffer, "raw", "BGRA", 0, 1)
+    image = Image.frombuffer("RGBA", (width, height), buffer, "raw", "BGRA", 0, 1)
+    # `PrintWindow` returns TRUE and hands back an unpainted bitmap when the
+    # window is not composited, which is what a session with no interactive
+    # desktop looks like from in here. A flat image is not a screenshot, and
+    # saving one over a good one destroys it while the tool reports success, so
+    # refuse it here - before any save, not after.
+    colours = image.getcolors(maxcolors=1 << 16)
+    if colours is not None and len(colours) <= 2:
+        raise RuntimeError(
+            f"window {hwnd} came back as {len(colours)} flat colour(s): it was "
+            f"never painted, so this is not a screenshot"
+        )
+    return image
 
 
 def _toplevel(widget) -> int:
