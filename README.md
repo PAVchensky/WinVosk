@@ -13,7 +13,7 @@ call of any kind: the speech model runs locally, on the CPU, through the
 [Vosk](https://github.com/alphacep/vosk-api) decoder.
 
 ```
-Python 3.14 · vosk 0.3.45 · Vosk models for 26 languages
+Python 3.14 · vosk 0.3.45 · Vosk models for 32 languages
 Windows x64 · no installer · no admin rights · one folder
 ```
 
@@ -531,7 +531,7 @@ driver. Check the native rate before blaming the app.
 ## Models and languages
 
 WinVosk ships with **Russian** (`vosk-model-small-ru-0.22`, 44 MB). Vosk
-publishes models for **26 languages**, and any of them can be dropped into
+publishes models for **32 languages**, and any of them can be dropped into
 `models\` — the app finds it by itself, no configuration and no code change.
 
 ### How to install another one
@@ -605,6 +605,18 @@ Main languages first. Sizes are the download (`.zip`), not the unpacked model.
 | Esperanto | `eo` | `vosk-model-small-eo-0.42` | 42 MB |
 | Breton | `br` | `vosk-model-br-0.8` | 78 MB |
 | Tagalog | `tl` | `vosk-model-tl-ph-generic-0.6` | 314 MB |
+| Greek | `el` | `vosk-model-el-gr-0.7` | 1.1 GB, big only |
+| Kazakh | `kz` | `vosk-model-small-kz-0.42` | 58 MB |
+| Kazakh, large | `kz` | `vosk-model-kz-0.42` | 1.3 GB |
+| Gujarati | `gu` | `vosk-model-small-gu-0.42` | 100 MB |
+| Gujarati, large | `gu` | `vosk-model-gu-0.42` | 700 MB |
+| Tajik | `tg` | `vosk-model-small-tg-0.22` | 50 MB |
+| Tajik, large | `tg` | `vosk-model-tg-0.22` | 327 MB |
+| Telugu | `te` | `vosk-model-small-te-0.42` | 58 MB |
+| Kyrgyz | `ky` | `vosk-model-small-ky-0.42` | 49 MB |
+| Kyrgyz, large | `ky` | `vosk-model-ky-0.42` | 1.1 GB |
+| Georgian | `ka` | `vosk-model-small-ka-0.42` | 45 MB |
+| Georgian, large | `ka` | `vosk-model-ka-0.42` | 700 MB |
 
 Notes:
 

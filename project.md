@@ -171,7 +171,7 @@ Detail and rationale in `AGENTS.md` § Invariants worth keeping. In short:
 ## Documentation
 
 - `README.md` — the main page and the user guide: install, unpack, run, every
-  setting, `phrases.txt`, poor recognition, the 26 model languages
+  setting, `phrases.txt`, poor recognition, the 32 model languages
 - `README.ru.md` — the same guide in Russian; edited as one document with
   `README.md`, same headings in the same order, because a GitHub anchor comes
   from the heading text

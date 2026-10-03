@@ -321,7 +321,7 @@ Expand-Archive .\tmp\m.zip .\models -Force
 
 The official host `alphacephei.com` throttles large downloads heavily from
 some networks, which is why the Hugging Face mirror is used. The full table of
-the 26 languages Vosk publishes a model for, with model names and sizes, is in
+the 32 languages Vosk publishes a model for, with model names and sizes, is in
 `README.md` § Models and languages.
 
 ## Transcribing files
