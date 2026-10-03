@@ -17,8 +17,10 @@ APP_NAME = "WinVosk"
 # The release this build is. Bumped for every release, and the only place the
 # number is written: `--diagnose` prints it, the panel shows it in its title and
 # `winvosk.__version__` derives from it, so a bug report can be tied to a build
-# without anyone reading a file.
-VERSION = "1.3"
+# without anyone reading a file. Three parts, MAJOR.MINOR.PATCH, all three
+# written: a two part number sorts wrongly in the release list and cannot carry
+# a patch at all.
+VERSION = "1.6.3"
 
 # True inside a PyInstaller bundle, where the modules sit in `_internal\` and
 # `__file__` no longer points at the folder the user keeps their files in.
@@ -68,6 +70,16 @@ CLIPBOARD_DEFAULT = False
 CORRECT_WORDS_DEFAULT = True
 # The interface language, `text.LANGUAGES`, English unless the user says otherwise.
 LANGUAGE_DEFAULT = text.DEFAULT_LANGUAGE
+# The interface themes and the one a machine with nothing stored gets. Plain
+# strings, and named here rather than in `winvosk.theme` so that naming the
+# default costs nothing: `theme` imports `tkinter`, and this module is imported
+# by every console flag in the application, none of which opens a window. See
+# `winvosk.theme` for the long version of that argument.
+THEMES = ("light", "dark")
+# Light: the panel is a light grey page with white cards, which is what it reads
+# as at a glance, and the dark one is a switch away in the settings rather than a
+# decision to undo.
+THEME_DEFAULT = "light"
 TYPE_DELAY = 0.02
 MAX_SESSION_SECONDS = 180.0
 PHRASES_FILE = BASE_DIR / "phrases.txt"

@@ -2,9 +2,10 @@
 
 The file is per-machine state, so it is ignored by git and deleted freely: a
 missing or broken file only costs the defaults, never a working application.
-The schema is six keys: the hotkey list, the interface language and four on/off
-switches — "Печатать в активное окно", "Сразу в буфер", "Исправлять свои слова"
-and "Переключать запись". Unknown keys are ignored on read so a file written by a
+The schema is seven keys: the hotkey list, the interface language, the interface
+theme and four on/off switches — "Печатать в активное окно", "Сразу в буфер",
+"Исправлять свои слова" and "Переключать запись". Unknown keys are ignored on
+read so a file written by a
 later version still loads, and a value of the wrong shape or one `hotkey.parse`
 refuses is replaced by the defaults rather than handed on to the listener, which
 would raise and keep the app from starting at all.
@@ -33,6 +34,7 @@ CLIPBOARD_KEY = "copy_to_clipboard"
 CORRECT_KEY = "correct_words"
 TOGGLE_KEY = "toggle_recording"
 LANGUAGE_KEY = "language"
+THEME_KEY = "theme"
 
 
 def load() -> dict[str, Any]:
@@ -237,6 +239,36 @@ def store_language(value: str) -> bool:
         return False
     data = load()
     data[LANGUAGE_KEY] = value
+    return save(data)
+
+
+def theme_name() -> str:
+    """The interface theme, or the shipped default when nothing usable is stored.
+
+    Checked against `config.THEMES` rather than accepted as any string, for the
+    same reason `language()` is checked against `text.LANGUAGES`: an unknown name
+    has no palette, so every colour in the panel would have to fall back one at a
+    time instead of the design falling back once, here.
+    """
+    stored = load().get(THEME_KEY)
+    if stored is None:
+        return config.THEME_DEFAULT
+    if isinstance(stored, str) and stored in config.THEMES:
+        return stored
+    log.warning(
+        "%s: %r must be one of %s, using %r",
+        SETTINGS_FILE, stored, ", ".join(config.THEMES), config.THEME_DEFAULT,
+    )
+    return config.THEME_DEFAULT
+
+
+def store_theme_name(value: str) -> bool:
+    """Persist the interface theme. False means the disk kept the old one."""
+    if value not in config.THEMES:
+        log.warning("%r is not a theme this app has", value)
+        return False
+    data = load()
+    data[THEME_KEY] = value
     return save(data)
 
 

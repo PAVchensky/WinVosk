@@ -1,24 +1,28 @@
-"""Always-on-top Tk panel showing the live transcription.
+"""Always-on-top panel showing the live transcription.
 
 The window is built unmapped and stays in the tray until the tray icon is
 clicked, so the app never takes the focus at start up. Everything below works
-the same either way: `show` and `hide` are the only two places that map or
-unmap it, and the recording chip is a `Toplevel` of this root, which maps on
-its own while the root stays withdrawn.
+the same either way: `show` and `hide` are the only two places that map or unmap
+it, and the recording chip is a `Toplevel` of this root, which maps on its own
+while the root stays withdrawn.
 
-Every visible string is a key from `winvosk.text`, and every widget that shows
-one is registered in `self._messages`. That is what makes `set_language` possible
-without rebuilding the window: the widgets stay, the state stays, and only the
-text is re-painted. Widgets whose text carries a value — the footer, the window
-title, the record button — are refreshed by the setter that owns the value, so
-the registry holds only the static ones.
+The look comes from `theme` and `widgets`: a light grey page, white cards with a
+soft shadow instead of a border, an indigo accent, one spacing scale and one type
+scale. Nothing here writes a colour, a radius or a font of its own — `theme`
+owns all three — and nothing here writes a user visible string either: every
+label is a key from `winvosk.text`, and every widget that shows one is registered
+in `self._messages`. That is what makes `set_language` possible without rebuilding
+the window: the widgets stay, the state stays, and only the text is re-painted.
 
-The settings tab is taller than the window, so it is built on a canvas and
-scrolls. That is not decoration: a `Frame` inside the notebook is laid out at
-its full height and simply runs off the bottom of the window, so the last two
-groups — autostart and the language — were there in the code and unreachable
-with a mouse. `check_settings_reachable` is what proves the bottom of the tab
-can be reached, and `--check-bundle` runs it.
+Widgets whose text carries a value — the footer, the window title, the record
+button — are refreshed by the setter that owns the value, so the registry holds
+only the static ones.
+
+A change of theme is the one thing that does rebuild: `set_theme` throws the page
+tree away and builds it again in the new colours, rather than asking twenty
+widgets to repaint themselves in a palette they were not built for. The root, the
+tray-only start up, the variables and the chip all survive it, and the state is
+put back from the attributes this object already holds.
 """
 
 from __future__ import annotations
@@ -27,29 +31,27 @@ import logging
 import queue
 import tkinter as tk
 from collections.abc import Callable
-from tkinter import messagebox, scrolledtext, ttk
+from tkinter import messagebox
 
-from . import config, overlay, text, vocabulary
+from PIL import ImageTk
+
+from . import config, overlay, text, theme, tray, vocabulary, widgets
 
 log = logging.getLogger(__name__)
 
-WIDTH = 560
-# Tall enough for the whole settings tab at 100% scaling, which is what keeps
-# the language and the autostart switch in sight on a normal screen. Anything
-# more would not fit a small display either, and anything less scrolls — which
-# `_place` allows and nothing depends on. The dictionary tab simply gets a
-# larger transcript box.
+# The window size, in design pixels. 720 rather than 600 because the settings tab
+# is two columns and a 300 px column is below the point where a hint reads as a
+# sentence; the dictation tab uses the extra width for the transcript, which is
+# the one thing in it that wants room. 700 tall is what keeps the bottom of the
+# settings tab in reach on a normal screen: the two columns come to a little over
+# 700 px of content, so what is left over scrolls by about a card, and
+# `check_settings_reachable` is what proves the rest of it can be got to. The
+# minimum size is the same, so the columns can never be squeezed into a shape
+# they were not drawn for.
+WIDTH = 720
 HEIGHT = 700
-MIN_WIDTH = 360
-MIN_HEIGHT = 260
 MARGIN = 24
 POLL_MS = 60
-# One wheel notch on the settings tab, in pixels, rather than Tk's default
-# fraction of the window, so the tab moves by the same step at any window height.
-SCROLL_STEP = 40
-# The settings page's own padding, and what its wrapped lines are measured against.
-PAGE_PAD = 16
-WRAP_MIN = 160
 
 _CAPTURE_PROMPT = "capture_prompt"
 
@@ -66,7 +68,11 @@ class Panel:
         correct_words: bool = True,
         toggle: bool = False,
         language: str = text.DEFAULT_LANGUAGE,
+        theme_name: str = theme.DEFAULT_THEME,
     ) -> None:
+        # Must happen before there is a window: afterwards Windows refuses, and
+        # the panel comes up with every corner resampled a second time.
+        theme.enable_dpi_awareness()
         self._commands = commands
         self._text = ""
         self._partial = ""
@@ -75,7 +81,7 @@ class Panel:
         self._visible = False
         # One closure per widget that shows a message, so a language change can
         # re-paint them all without rebuilding the window.
-        self._repaint: list[Callable[[], None]] = []
+        self._messages: list[Callable[[], None]] = []
         self._word_count = 0
         self._capturing = False
         self._hotkey_text = config.hotkey_label()
@@ -88,17 +94,13 @@ class Panel:
         # of language; a raw message set from the app is shown as it came.
         self._status_key = "status_loading"
         self._status_raw = ""
-        self._status_color = "#1f7a34"
+        self._status_role = "muted"
         self._device = ""
-        # The settings tab and its scrolled page, filled in by `_settings_page`.
-        self._settings_canvas: tk.Canvas | None = None
-        self._settings_inner: tk.Frame | None = None
-        self._settings_item: str | None = None
-        self._scrollbar: ttk.Scrollbar | None = None
-        self._scroll_shown = False
-        # The labels that have to re-wrap when the window is resized, rather than
-        # laying out in one line and being cut off at the edge of the window.
-        self._wrapped: list[tk.Label] = []
+        self._settings_page: widgets.Scroller | None = None
+        self._window_icon: list[ImageTk.PhotoImage] = []
+        self._icon_theme = ""
+        self._theme_name = theme_name if theme_name in theme.THEMES else theme.DEFAULT_THEME
+        self._colours = theme.palette(self._theme_name)
 
         self._root = tk.Tk()
         # Withdrawn before a single widget is built, so the window is never
@@ -107,230 +109,292 @@ class Panel:
         # itself, which is why the tray is the only thing that shows this.
         # The same trick is in `overlay.RecordingOverlay._build`.
         self._root.withdraw()
+        # Both of these need the interpreter and neither needs the window, so
+        # they go first: a font resolved after the first widget is built is a
+        # widget drawn in the fallback face.
+        theme.bind(self._root)
+        theme.apply(self._root, self._colours)
         self._live_typing = tk.BooleanVar(value=bool(live_typing))
         self._clipboard = tk.BooleanVar(value=bool(clipboard))
         self._autostart = tk.BooleanVar(value=bool(autostart))
         self._correct_words = tk.BooleanVar(value=bool(correct_words))
         self._toggle_var = tk.BooleanVar(value=bool(toggle))
+        self._dark_var = tk.BooleanVar(value=theme.is_dark(self._theme_name))
         self._language = tk.StringVar(value=language)
         # The chip's equalizer is fed by the engine, not by the panel: the
         # levels live in the audio thread and are read here, on the Tk thread.
-        self._overlay = overlay.RecordingOverlay(self._root, next_level)
+        self._overlay = overlay.RecordingOverlay(
+            self._root, next_level, palette=self._colours
+        )
         self._root.title(self._title())
         self._root.attributes("-topmost", True)
         self._root.protocol("WM_DELETE_WINDOW", self.hide)
+        self._root.bind("<Map>", self._on_map)
         self._place()
+        self._dress_window()
 
-        # Two tabs: the dictation itself and the settings that shape it.
-        self._notebook = ttk.Notebook(self._root)
-        self._notebook.pack(fill="both", expand=True)
-        body = tk.Frame(self._notebook)
-        self._notebook.add(body, text=text.t("tab_dictation"))
-        self._track_tab(body, "tab_dictation")
-        settings_page, settings = self._settings_page(self._notebook)
-        self._notebook.add(settings_page, text=text.t("tab_settings"))
-        self._track_tab(settings_page, "tab_settings")
-
-        header = tk.Frame(body, padx=12, pady=10)
-        header.pack(fill="x")
-        self._status = tk.Label(
-            header, text=text.t("status_loading"), anchor="w",
-            font=("Segoe UI", 11, "bold"),
+        # Everything lives under one frame, so a change of theme can throw that
+        # frame away and build another without touching the root.
+        self._shell = tk.Frame(
+            self._root, bg=self._colours.bg, bd=0, highlightthickness=0
         )
-        self._status.pack(side="left")
+        self._shell.pack(fill="both", expand=True)
+        self._build()
+
+    # Construction.
+
+    def _build(self) -> None:
+        colours = self._colours
+        self._notebook = widgets.Tabs(self._shell, palette=colours)
+        self._notebook.pack(fill="both", expand=True)
+
+        dictation = tk.Frame(self._notebook.content, bg=colours.bg, bd=0,
+                             highlightthickness=0)
+        self._notebook.add(dictation, text=text.t("tab_dictation"), key="tab_dictation")
+        self._build_dictation(dictation)
+
+        settings = widgets.Scroller(self._notebook.content, palette=colours)
+        self._notebook.add(settings, text=text.t("tab_settings"), key="tab_settings")
+        self._settings_page = settings
+        self._build_settings(settings)
+        settings.bind_wheel()
+
+    def _build_dictation(self, parent: tk.Frame) -> None:
+        colours = self._colours
+        pad = theme.px(theme.SPACE_XL)
+
+        header = tk.Frame(parent, bg=colours.bg, bd=0, highlightthickness=0)
+        header.pack(fill="x", padx=pad, pady=(theme.px(theme.SPACE_MD), 0))
+        # Right to left: the model name takes what it needs from the far edge,
+        # then the dot, then the status takes the rest of the row. Packed the
+        # other way round the status would be laid out while still empty and ask
+        # for nothing, and a label never re-asks once it has been given text.
         self._model = tk.Label(
-            header, text=config.MODEL_NAME, anchor="e", fg="#777777",
-            font=("Segoe UI", 8),
+            header, text=config.MODEL_NAME, bg=colours.bg, fg=colours.text_subtle,
+            font=theme.mono(widgets.TYPE_TINY), anchor="e",
         )
         self._model.pack(side="right")
-
-        self._box = scrolledtext.ScrolledText(
-            body, wrap="word", height=12, font=("Consolas", 12),
-            relief="solid", borderwidth=1, padx=8, pady=8,
+        self._dot = widgets.Dot(
+            header, palette=colours, colour=colours.text_subtle, bg=colours.bg
         )
-        self._box.pack(fill="both", expand=True, padx=12, pady=10)
-        self._box.configure(state="disabled")
-
-        controls = tk.Frame(body, padx=12)
-        controls.pack(fill="x")
-        self._record_button = tk.Button(
-            controls, text=text.t("record_hold"), width=12, font=("Segoe UI", 10),
+        self._dot.pack(side="left", padx=(0, theme.px(theme.SPACE_SM)))
+        self._status = widgets.body(
+            header, palette=colours, size=widgets.TYPE_BODY, bg=colours.bg
         )
-        self._record_button.bind("<ButtonPress-1>", self._press)
-        self._record_button.bind("<ButtonRelease-1>", self._release)
-        self._record_button.bind("<Leave>", self._release)
+        self._status.pack(side="left", fill="x", expand=True)
+
+        card = widgets.Card(parent, palette=colours)
+        card.pack(
+            fill="both", expand=True,
+            padx=pad, pady=theme.px(theme.SPACE_MD),
+        )
+        self._box = widgets.CodeBox(
+            card.inner, palette=colours, placeholder=text.t("transcript_placeholder")
+        )
+        self._box.pack(fill="both", expand=True)
+        self._messages.append(
+            lambda: self._box.set_placeholder(text.t("transcript_placeholder"))
+        )
+
+        controls = tk.Frame(parent, bg=colours.bg, bd=0, highlightthickness=0)
+        controls.pack(fill="x", padx=pad, pady=(0, theme.px(theme.SPACE_MD)))
+        # The record button is the one the panel exists for, so it is the only
+        # primary in the row and it goes first: everything else is a quiet
+        # consequence of what it does.
+        self._record_button = widgets.Button(
+            controls, text=text.t("record_hold"), palette=colours,
+            variant="primary", size="lg", on_press=self._press,
+            on_release=self._release, bg=colours.bg,
+        )
         self._record_button.pack(side="left")
-        self._stop_button = tk.Button(
-            controls, text=text.t("button_stop"), width=9, font=("Segoe UI", 10),
-            state="disabled", command=self._stop,
+        self._stop_button = widgets.Button(
+            controls, text=text.t("button_stop"), palette=colours,
+            variant="secondary", size="lg", command=self._stop, bg=colours.bg,
         )
-        self._stop_button.pack(side="left", padx=6)
+        self._stop_button.pack(side="left", padx=(theme.px(theme.SPACE_SM), 0))
+        self._stop_button.set_enabled(False)
         self._track(self._stop_button, "button_stop")
-        copy_button = tk.Button(
-            controls, text=text.t("button_copy"), width=10, command=self._copy
+        copy_button = widgets.Button(
+            controls, text=text.t("button_copy"), palette=colours,
+            variant="ghost", size="lg", command=self._copy, bg=colours.bg,
         )
-        copy_button.pack(side="left", padx=6)
+        copy_button.pack(side="left", padx=(theme.px(theme.SPACE_SM), 0))
         self._track(copy_button, "button_copy")
-        clear_button = tk.Button(
-            controls, text=text.t("button_clear"), width=9, command=self._clear
+        clear_button = widgets.Button(
+            controls, text=text.t("button_clear"), palette=colours,
+            variant="ghost", size="lg", command=self._clear, bg=colours.bg,
         )
-        clear_button.pack(side="left")
+        clear_button.pack(side="left", padx=(theme.px(theme.SPACE_XS), 0))
         self._track(clear_button, "button_clear")
 
-        self._footer = tk.Label(
-            body, text=self._footer_text(config.hotkey_label()),
-            fg="#777777", font=("Segoe UI", 8), padx=12, pady=10,
+        self._footer = widgets.caption(
+            parent, palette=colours, size=widgets.TYPE_CAPTION, bg=colours.bg
         )
-        self._footer.pack(fill="x")
+        self._footer.configure(
+            text=self._footer_text(self._hotkey_text),
+            pady=theme.px(theme.SPACE_MD),
+        )
+        self._footer.pack(fill="x", padx=pad)
         # The footer carries the combination, so it is repainted from the label
         # in effect rather than from a key.
-        self._repaint.append(
+        self._messages.append(
             lambda: self._footer.configure(text=self._footer_text(self._hotkey_text))
         )
 
-        intro = tk.Label(
-            settings, text=text.t("settings_intro"),
-            font=("Segoe UI", 9), anchor="w", justify="left",
-            wraplength=WIDTH - 2 * PAGE_PAD,
+    def _build_settings(self, parent: widgets.Scroller) -> None:
+        """Two columns, and one card across the top of both.
+
+        The key gets the full width because its field has to hold a combination
+        in monospace next to a Reset button, and neither of those is something to
+        squeeze for the sake of a column. Everything below it is a switch and a
+        sentence about it, which is exactly what a 320 px column is for, and the
+        tab then fits without scrolling at all on a display of any ordinary size.
+
+        The two columns are packed rather than gridded: a grid would tie the two
+        sides to one row height and leave a short column with a gap under it, and
+        pack lets each side be as tall as its own content.
+        """
+        colours = self._colours
+        body = parent.body
+        pad = theme.px(theme.SPACE_XL)
+        gap = theme.px(theme.SPACE_LG)
+        wrap = self._wrap()
+        column = self._column_width()
+
+        intro = widgets.Paragraph(
+            body, palette=colours, text=text.t("settings_intro"),
+            size=widgets.TYPE_BODY,
+            colour=colours.text_muted, bg=colours.bg, width=wrap,
         )
-        intro.pack(fill="x")
+        intro.pack(fill="x", padx=pad, pady=(theme.px(theme.SPACE), 0))
         self._track(intro, "settings_intro")
-        # Wrapped, so the sentence is read in full rather than cut at the right
-        # edge of the window, and re-wrapped on a resize by `_resize_settings`.
-        self._wrapped.append(intro)
-        hotkey_title = tk.Label(
-            settings, text=text.t("hotkey_label"), font=("Segoe UI", 10, "bold"),
-            anchor="w",
-        )
-        hotkey_title.pack(fill="x", pady=(14, 4))
-        self._track(hotkey_title, "hotkey_label")
 
-        hotkey_row = tk.Frame(settings)
-        hotkey_row.pack(fill="x")
-        # A label, not an entry: nothing is typed here, the hook captures.
-        self._hotkey_field = tk.Label(
-            hotkey_row, text=config.hotkey_label(), bg="#ffffff", relief="solid",
-            borderwidth=1, padx=10, pady=6, font=("Consolas", 12), anchor="w",
+        # The key, the mode that key works in, and what that mode does: three
+        # properties of one thing, so one card.
+        hotkey = self._card(body, "hotkey_label", first=True)
+        row = tk.Frame(hotkey.inner, bg=colours.surface, bd=0, highlightthickness=0)
+        row.pack(fill="x")
+        # A field, not an entry: nothing is typed here, the hook captures.
+        self._hotkey_field = widgets.Field(
+            row, palette=colours, text=self._hotkey_text, command=self._capture_hotkey
         )
-        self._hotkey_field.pack(side="left")
-        self._hotkey_field.bind("<ButtonPress-1>", self._capture_hotkey)
-        reset_button = tk.Button(
-            hotkey_row, text=text.t("button_reset"), width=10,
-            command=self._reset_hotkey,
+        self._hotkey_field.pack(side="left", fill="x", expand=True)
+        reset_button = widgets.Button(
+            row, text=text.t("button_reset"), palette=colours,
+            variant="secondary", command=self._reset_hotkey,
         )
-        reset_button.pack(side="left", padx=8)
+        reset_button.pack(side="left", padx=(theme.px(theme.SPACE_SM), 0))
         self._track(reset_button, "button_reset")
-
-        self._hotkey_hint = tk.Label(
-            settings, text=text.t("hint_idle"), fg="#777777", font=("Segoe UI", 8),
-            anchor="w", justify="left",
+        self._hotkey_hint = self._hint(hotkey.inner, "hint_idle", wrap)
+        # It belongs to the key above it rather than to the switches in the
+        # column below: this is a property of how the combination acts, not of
+        # where the text goes.
+        self._toggle_check = widgets.Choice(
+            hotkey.inner, palette=colours, text=text.t("option_toggle"),
+            variable=self._toggle_var, command=self._pick_toggle, wraplength=wrap,
         )
-        self._hotkey_hint.pack(fill="x", pady=(10, 0))
-
-        # It belongs to the key above it rather than to the switches below: this
-        # is a property of how the combination acts, not of where the text goes.
-        self._toggle_check = tk.Checkbutton(
-            settings, text=text.t("option_toggle"), variable=self._toggle_var,
-            command=self._pick_toggle,
-        )
-        self._toggle_check.pack(anchor="w", pady=(14, 0))
+        self._toggle_check.pack(fill="x", pady=(theme.px(theme.SPACE), 0))
         self._track(self._toggle_check, "option_toggle")
-        self._toggle_hint = tk.Label(
-            settings, text=text.t("toggle_hint"), fg="#777777",
-            font=("Segoe UI", 8), anchor="w", justify="left",
-            wraplength=WIDTH - 2 * PAGE_PAD,
+        self._toggle_hint = self._hint(hotkey.inner, "toggle_hint", wrap)
+
+        columns = tk.Frame(body, bg=colours.bg, bd=0, highlightthickness=0)
+        columns.pack(fill="x", padx=pad, pady=(theme.px(theme.SPACE_MD), 0))
+        left = self._column(columns, padx=(0, gap))
+        right = self._column(columns)
+
+        # What the words do when they are recognised, then when the app starts.
+        insertion = self._card(left, "group_insertion", first=True)
+        self._check(insertion.inner, "option_typing", self._live_typing,
+                    "set_live_typing", column)
+        self._check(insertion.inner, "option_clipboard", self._clipboard,
+                    "set_clipboard", column)
+        self._correct_check = self._check(
+            insertion.inner, "option_corrections", self._correct_words,
+            "set_correct_words", column, top_pad=theme.SPACE_SM,
         )
-        self._toggle_hint.pack(fill="x", pady=(4, 0))
-        self._wrapped.append(self._toggle_hint)
+        self._word_hint = self._hint(insertion.inner, "", column)
+        # The check belongs to the switch above it, so it sits right under the
+        # hint rather than in a group of its own with nothing else in it.
+        self._check_words_button = widgets.Button(
+            insertion.inner, text=text.t("button_check_words"), palette=colours,
+            variant="secondary", command=self._check_words,
+        )
+        self._check_words_button.pack(anchor="w", pady=(theme.px(theme.SPACE), 0))
+        self._track(self._check_words_button, "button_check_words")
 
-        self._build_options(settings)
-        self._bind_wheel(settings_page)
+        startup = self._card(left, "group_startup")
+        self._check(startup.inner, "option_autostart", self._autostart,
+                    "set_autostart", column)
+        self._autostart_hint = self._hint(startup.inner, "autostart_hint", column)
 
-    def _settings_page(self, parent: tk.Misc) -> tuple[tk.Frame, tk.Frame]:
-        """The settings tab on a canvas that scrolls, and the frame to fill.
+        # The two cards that are about this panel rather than about dictation.
+        # A switch rather than two radios for the theme: there are two of them and
+        # one is what you are looking at now.
+        appearance = self._card(right, "group_appearance", first=True)
+        theme_row = tk.Frame(
+            appearance.inner, bg=colours.surface, bd=0, highlightthickness=0
+        )
+        theme_row.pack(fill="x")
+        self._dark_switch = widgets.Switch(
+            theme_row, palette=colours, variable=self._dark_var,
+            command=self._pick_theme,
+        )
+        self._dark_switch.pack(side="left", anchor="n")
+        self._dark_label = widgets.body(theme_row, palette=colours)
+        self._dark_label.configure(text=text.t("option_theme"))
+        self._dark_label.pack(side="left", padx=(theme.px(theme.SPACE), 0))
+        self._track(self._dark_label, "option_theme")
+        self._theme_hint = self._hint(appearance.inner, "theme_hint", column)
 
-        The tab is a hotkey field, four switches and three groups, which is more
-        pixels than the window has and, on a short screen or a scaled display,
-        more than any height is. A `Frame` inside a notebook does not adapt: it
-        is laid out at its full requested height and simply runs off the bottom
-        of the window, so everything below the fold was drawn outside it and
-        could not be clicked. That is how the autostart switch and the language
-        buttons came to be missing while both were present in the code.
+        language = self._card(right, "group_language")
+        languages = tk.Frame(
+            language.inner, bg=colours.surface, bd=0, highlightthickness=0
+        )
+        languages.pack(fill="x")
+        # Endonyms, so each option reads correctly whichever language is active.
+        for code in text.LANGUAGES:
+            radio = widgets.Choice(
+                languages, palette=colours, kind="radio", text=text.name_of(code),
+                variable=self._language, command=self._pick_language, value=code,
+            )
+            radio.pack(side="left", padx=(0, theme.px(theme.SPACE_LG)))
 
-        Returns the page to hand to the notebook and the frame the widgets go
-        into, so the caller keeps building the tab the way it always has.
+        self._options_hint = self._hint(body, "", wrap, bg=colours.bg)
+        self._options_hint.pack_configure(
+            padx=pad, pady=(theme.px(theme.SPACE), theme.px(theme.SPACE_LG))
+        )
+
+    # Small builders, so the settings tab above reads as a list of what is in it.
+
+    def _column(self, parent: tk.Misc, *, padx: int = 0) -> tk.Frame:
+        """One half of the settings tab, half as wide as the other by `expand`."""
+        column = tk.Frame(
+            parent, bg=self._colours.bg, bd=0, highlightthickness=0
+        )
+        column.pack(
+            side="left", fill="both", expand=True, padx=padx,
+        )
+        return column
+
+    def _card(self, parent: tk.Misc, key: str, padx: int = 0,
+              first: bool = False) -> widgets.Card:
+        """A card with its own title, which a language change repaints in place.
+
+        `first` is the top card of a column, which is already spaced from
+        whatever is above the column by the row's own padding: giving it the gap
+        as well is twenty pixels of nothing, twice over, and the settings tab has
+        six cards.
         """
-        canvas = tk.Canvas(parent, borderwidth=0, highlightthickness=0,
-                           yscrollincrement=SCROLL_STEP)
-        bar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=bar.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        # Left unpacked until there is something to scroll to: an inert
-        # scrollbar down the side of a tab that fits reads as a control that
-        # does nothing, and the settings tab is photographed for the README.
-        self._scrollbar = bar
-        inner = tk.Frame(canvas, padx=PAGE_PAD, pady=PAGE_PAD)
-        self._settings_item = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>", lambda _event: self._resize_settings())
-        canvas.bind("<Configure>",
-                    lambda event: self._resize_settings(event.width))
-        self._settings_canvas = canvas
-        self._settings_inner = inner
-        return canvas, inner
-
-    def _bind_wheel(self, widget: tk.Misc) -> None:
-        """Let the wheel scroll the settings tab from anywhere inside it.
-
-        Bound on the page and on every widget in it, rather than with `bind_all`:
-        the app has one scrolling view, and a global binding would also fire
-        while the pointer is over the recording chip, which is a window of its
-        own and has nothing to scroll.
-        """
-        widget.bind("<MouseWheel>", self._on_wheel, add="+")
-        for child in widget.winfo_children():
-            self._bind_wheel(child)
-
-    def _on_wheel(self, event) -> None:
-        """Scroll the settings tab, and only while it is the one on screen."""
-        canvas = self._settings_canvas
-        if canvas is None or not event.delta or not canvas.winfo_ismapped():
-            return
-        canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
-
-    def _resize_settings(self, width: int | None = None) -> None:
-        """Follow the content: the page is as wide as the window, and scrolls.
-
-        `width` is given only by the canvas, which is the one that knows how
-        wide it is; the inner frame asks for the same work when the content
-        changed height, which is what a change of language does.
-        """
-        canvas = self._settings_canvas
-        if canvas is None:
-            return
-        if width is not None and self._settings_item:
-            canvas.itemconfigure(self._settings_item, width=width)
-            for label in self._wrapped:
-                label.configure(wraplength=max(WRAP_MIN, width - 2 * PAGE_PAD))
-        canvas.configure(scrollregion=canvas.bbox("all"))
-        self._toggle_scrollbar()
-
-    def _toggle_scrollbar(self) -> None:
-        """Show the scrollbar while the tab is taller than the window."""
-        canvas, bar = self._settings_canvas, self._scrollbar
-        if canvas is None or bar is None:
-            return
-        region = canvas.bbox("all")
-        overflow = bool(region) and region[3] > canvas.winfo_height()
-        if overflow == self._scroll_shown:
-            return
-        self._scroll_shown = overflow
-        if overflow:
-            bar.pack(side="right", fill="y")
-        else:
-            bar.pack_forget()
-            # Nothing to scroll to any more, so a view left at the end is put
-            # back: a shorter tab must not stay showing its own bottom edge.
-            canvas.yview_moveto(0.0)
+        card = widgets.Card(parent, palette=self._colours)
+        card.pack(
+            fill="x", padx=padx,
+            pady=(0 if first else theme.px(theme.SPACE_MD), 0),
+        )
+        title = widgets.heading(card.inner, palette=self._colours)
+        title.configure(text=text.t(key))
+        title.pack(fill="x", pady=(0, theme.px(theme.SPACE_SM)))
+        self._track(title, key)
+        return card
 
     def check_settings_reachable(self) -> str:
         """Prove that the bottom of the settings tab can be reached, and report how.
@@ -340,13 +404,17 @@ class Panel:
         fits; raises `AssertionError` when the bottom of the tab is still off
         screen after scrolling, which is the failure this whole arrangement
         exists to make impossible.
+
+        Called by `run.py --check-bundle`, on the panel being built unmapped in
+        the tray: a settings tab that cannot be got to is invisible to every
+        console flag and to every probe, and only a real window shows it.
         """
-        canvas, inner = self._settings_canvas, self._settings_inner
-        if canvas is None or inner is None:
+        page = self._settings_page
+        if page is None:
             raise AssertionError(
-                "the settings tab is not on a canvas, so a tab taller than the "
-                "window is clipped with no way to reach what is below the edge"
+                "the settings tab was never built, so there is nothing to reach"
             )
+        canvas = page.canvas
         self._root.update_idletasks()
         region = canvas.bbox("all")
         content = region[3] if region else 0
@@ -363,74 +431,149 @@ class Panel:
         return (f"{content}px of settings in a {viewport}px page, "
                 f"{'fits' if content <= viewport else 'scrolls'}")
 
-    def _build_options(self, parent: tk.Misc) -> None:
-        """The switches that decide where the text goes, when it starts, its language."""
-        insertion = self._frame(parent, "group_insertion")
-        self._check(insertion, "option_typing", self._live_typing, "set_live_typing")
-        self._check(insertion, "option_clipboard", self._clipboard, "set_clipboard")
-        self._correct_check = self._check(
-            insertion, "option_corrections", self._correct_words,
-            "set_correct_words", top_pad=4,
+    def _hint(self, parent: tk.Misc, key: str, wrap: int, *, bg: str | None = None):
+        """A paragraph under a control: why it is there, or what just happened."""
+        hint = widgets.Paragraph(
+            parent, palette=self._colours, text=text.t(key) if key else "",
+            colour=self._colours.text_subtle, bg=bg, width=wrap,
         )
-        self._word_hint = tk.Label(
-            insertion, text="", fg="#777777", font=("Segoe UI", 8), anchor="w",
-        )
-        self._word_hint.pack(anchor="w")
-        # The check belongs to the switch above it, so it sits right under the
-        # hint rather than in a group of its own with nothing else in it.
-        self._check_words_button = tk.Button(
-            insertion, text=text.t("button_check_words"), width=22,
-            command=self._check_words,
-        )
-        self._check_words_button.pack(anchor="w", pady=(8, 0))
-        self._track(self._check_words_button, "button_check_words")
+        hint.pack(fill="x", anchor="w", pady=(theme.px(theme.SPACE_SM), 0))
+        if key:
+            self._track(hint, key)
+        return hint
 
-        startup = self._frame(parent, "group_startup")
-        self._check(startup, "option_autostart", self._autostart, "set_autostart")
-        autostart_hint = tk.Label(
-            startup, text=text.t("autostart_hint"), fg="#777777",
-            font=("Segoe UI", 8), anchor="w",
+    def _check(
+        self, parent: tk.Misc, key: str, variable: tk.BooleanVar, command: str,
+        wrap: int, top_pad: int = 0,
+    ) -> widgets.Choice:
+        check = widgets.Choice(
+            parent, palette=self._colours, text=text.t(key), variable=variable,
+            command=lambda: self._toggle(command, variable), wraplength=wrap,
         )
-        autostart_hint.pack(anchor="w", pady=(4, 0))
-        self._track(autostart_hint, "autostart_hint")
-
-        language_group = self._frame(parent, "group_language")
-        # Endonyms, so each option reads correctly whichever language is active.
-        for index, code in enumerate(text.LANGUAGES):
-            radio = tk.Radiobutton(
-                language_group, text=text.name_of(code), value=code,
-                variable=self._language, command=self._pick_language,
-            )
-            radio.pack(anchor="w", side="left", padx=(0, 16) if index == 0 else 0)
-
-        self._options_hint = tk.Label(
-            parent, text="", fg="#777777", font=("Segoe UI", 8), anchor="w",
-            justify="left",
-        )
-        self._options_hint.pack(fill="x", pady=(10, 0))
-
-    def _frame(self, parent: tk.Misc, key: str) -> tk.LabelFrame:
-        """A group box that keeps its own title on a language change."""
-        frame = tk.LabelFrame(
-            parent, text=text.t(key), padx=12, pady=10,
-            font=("Segoe UI", 9, "bold"),
-        )
-        frame.pack(fill="x", pady=(20, 0))
-        self._track(frame, key)
-        return frame
-
-    def _check(self, parent: tk.Misc, key: str, variable: tk.Variable,
-               command: str, top_pad: int = 0) -> tk.Checkbutton:
-        check = tk.Checkbutton(
-            parent, text=text.t(key), variable=variable,
-            command=lambda: self._toggle(command, variable),
-        )
-        check.pack(anchor="w", pady=(top_pad, 0))
+        check.pack(fill="x", pady=(theme.px(top_pad), 0))
         self._track(check, key)
         return check
 
-    def _pick_language(self) -> None:
-        self._commands.put(("set_language", self._language.get()))
+    def _wrap(self) -> int:
+        """The width a paragraph gets across the whole window, less its own air."""
+        inset = theme.px(theme.SPACE_XL) + theme.px(theme.SPACE_MD)
+        inset += theme.px(theme.SHADOW_BLUR) + theme.px(theme.SPACE_SM)
+        return max(160, WIDTH - inset * 2)
+
+    def _column_width(self) -> int:
+        """The width a paragraph gets inside one column of the settings tab.
+
+        Half the window, less the page's own padding, less the gap between the
+        columns and less what a card takes off its own content for its padding
+        and its shadow. Kept as an arithmetic expression of the same tokens the
+        layout is built from, so a change to the window width or to the spacing
+        scale moves both at once rather than leaving a number behind.
+        """
+        gap = theme.px(theme.SPACE_LG)
+        inset = theme.px(theme.SPACE_XL) + theme.px(theme.SPACE_MD)
+        inset += theme.px(theme.SHADOW_BLUR) + theme.px(theme.SPACE_SM)
+        return max(160, (WIDTH - gap) // 2 - inset)
+
+    # Language, theme and state.
+
+    def _track(self, widget: tk.Misc, key: str) -> None:
+        """Remember that this widget shows a message, so it can be re-painted."""
+        self._messages.append(lambda w=widget, k=key: w.configure(text=text.t(k)))
+
+    def _paint_messages(self) -> None:
+        for repaint in self._messages:
+            try:
+                repaint()
+            except tk.TclError:
+                log.debug("could not repaint a message", exc_info=True)
+
+    def set_language(self, code: str) -> None:
+        """Repaint everything the language switch owns, keeping all state.
+
+        The window is not rebuilt: the caret in the transcript, the recording
+        state of the buttons and the chip would all have to be restored by hand,
+        and a half restored panel is worse than a stale label.
+        """
+        if not text.set_language(code):
+            self._language.set(text.language())
+            return
+        self._language.set(code)
+        self._paint_messages()
+        self._paint_record_button()
+        if self._capturing:
+            self.show_capture()
+        else:
+            self.set_hotkey(self._hotkey_text)
+        self._hotkey_hint.configure(text=text.t("hint_idle"), fg=self._colours.text_subtle)
+        self.set_word_count(self._word_count)
+        self._toggle_hint.configure(text=text.t("toggle_hint"))
+        self._refresh_status()
+        self._root.title(self._title())
+
+    @property
+    def visible(self) -> bool:
+        return self._visible
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+    @property
+    def theme_name(self) -> str:
+        return self._theme_name
+
+    def set_theme(self, name: str) -> None:
+        """Rebuild the page tree in `name`, keeping every value that is in effect.
+
+        The one operation here that throws widgets away. Repainting twenty
+        widgets into a palette they were not built for would mean a repaint path
+        per widget per role; a rebuild is one path, and the state it has to put
+        back is already held here as fields. The root, the chip, the variables and
+        the tray-only start up are untouched, so the panel does not flash on
+        screen and the microphone is not interrupted.
+        """
+        if name not in theme.THEMES:
+            self._dark_var.set(theme.is_dark(self._theme_name))
+            return
+        if name == self._theme_name:
+            self._dark_var.set(theme.is_dark(name))
+            return
+        self._theme_name = name
+        self._colours = theme.palette(name)
+        theme.apply(self._root, self._colours)
+        theme.reset()
+        overlay.set_palette(name)
+        self._root.configure(bg=self._colours.bg)
+        self._shell.destroy()
+        self._shell = tk.Frame(
+            self._root, bg=self._colours.bg, bd=0, highlightthickness=0
+        )
+        self._shell.pack(fill="both", expand=True)
+        self._build()
+        self._restore()
+        self._root.title(self._title())
+        self._dress_window()
+
+    def _restore(self) -> None:
+        """Put back everything a rebuild threw away, from the fields above."""
+        self._notebook.select(0)
+        self._dark_var.set(theme.is_dark(self._theme_name))
+        self._toggle_check.set(self._toggle)
+        self._autostart.set(bool(self._autostart.get()))
+        self.set_word_count(self._word_count)
+        self.set_recording(self._recording)
+        self._refresh_status()
+        self._render()
+        if self._capturing:
+            self.show_capture()
+        else:
+            self.set_hotkey(self._hotkey_text)
+
+    def _pick_theme(self) -> None:
+        """Hand the theme to the app, which owns the disk."""
+        self._commands.put(
+            ("set_theme", theme.DARK.name if self._dark_var.get() else theme.LIGHT.name)
+        )
 
     def _pick_toggle(self) -> None:
         """Hand the mode to the app, which owns the disk and the listener."""
@@ -447,84 +590,99 @@ class Panel:
         """
         self._toggle = bool(value)
         self._toggle_var.set(self._toggle)
+        self._toggle_check.set(self._toggle)
         self._paint_record_button()
         self._footer.configure(text=self._footer_text(self._hotkey_text))
         self._toggle_hint.configure(
-            text=text.t("toggle_hint"),
-            fg="#1f7a34" if self._toggle else "#777777",
+            fg=self._colours.success if self._toggle else self._colours.text_subtle
         )
-
-    def _footer_text(self, label: str) -> str:
-        key = "footer_toggle" if self._toggle else "footer"
-        return text.t(key, label=label)
-
-    def _track(self, widget: tk.Misc, key: str) -> None:
-        """Remember that this widget shows a message, so it can be re-painted."""
-        self._repaint.append(lambda w=widget, k=key: w.configure(text=text.t(k)))
-
-    def _track_tab(self, frame: tk.Misc, key: str) -> None:
-        self._repaint.append(
-            lambda f=frame, k=key: self._notebook.tab(f, text=text.t(k))
-        )
-
-    def _paint_messages(self) -> None:
-        for repaint in self._repaint:
-            try:
-                repaint()
-            except tk.TclError:
-                log.debug("could not repaint a message", exc_info=True)
-
-    def set_language(self, code: str) -> None:
-        """Repaint everything the language switch owns, keeping all state.
-
-        The window is not rebuilt: the caret in the text box, the recording
-        state of the buttons and the chip would all have to be restored by hand,
-        and a half restored panel is worse than a stale label.
-        """
-        if not text.set_language(code):
-            self._language.set(text.language())
-            return
-        self._language.set(code)
-        self._paint_messages()
-        self._paint_record_button()
-        if self._capturing:
-            self.show_capture()
-        else:
-            self.set_hotkey(self._hotkey_text)
-        self._hotkey_hint.configure(text=text.t("hint_idle"), fg="#777777")
-        self.set_word_count(self._word_count)
-        self._toggle_hint.configure(text=text.t("toggle_hint"))
-        self._refresh_status()
-        self._root.title(self._title())
-
-    @property
-    def visible(self) -> bool:
-        return self._visible
-
-    @property
-    def text(self) -> str:
-        return self._text
 
     def _toggle(self, command: str, variable: tk.BooleanVar) -> None:
         """Hand a changed switch to the app, which owns the disk and the registry."""
         self._commands.put((command, bool(variable.get())))
 
-    def _place(self) -> None:
-        """Put the window in the corner, as large as it asks and the screen allows.
+    def _footer_text(self, label: str) -> str:
+        key = "footer_toggle" if self._toggle else "footer"
+        return text.t(key, label=label)
 
-        The size is a request, not a promise: a window taller than the screen
-        cannot be moved with the mouse afterwards, and the title bar would sit
-        off the top. The settings tab scrolls, so a clamped height costs a
-        scrollbar and nothing else.
+    # Placement.
+
+    def _place(self) -> None:
+        """Put the panel in the bottom right corner of the work area.
+
+        The size is asked for in physical pixels, multiplied by the display
+        scale: a DPI aware process is given real pixels, so asking for 600 on a
+        150% display lands a 900 px window and pushes it off the corner. `wm
+        geometry` takes no float either, which is the other half of the same
+        mistake.
         """
+        ratio = theme.scale()
+        width, height = int(round(WIDTH * ratio)), int(round(HEIGHT * ratio))
         screen_w = self._root.winfo_screenwidth()
         screen_h = self._root.winfo_screenheight()
-        width = min(WIDTH, max(MIN_WIDTH, screen_w - 2 * MARGIN))
-        height = min(HEIGHT, max(MIN_HEIGHT, screen_h - 2 * MARGIN))
-        x = max(0, screen_w - width - MARGIN)
-        y = max(0, screen_h - height - MARGIN)
+        x = max(0, screen_w - width - int(MARGIN * ratio))
+        y = max(0, screen_h - height - int(MARGIN * ratio))
         self._root.geometry(f"{width}x{height}+{x}+{y}")
-        self._root.minsize(MIN_WIDTH, MIN_HEIGHT)
+        self._root.minsize(theme.px(WIDTH), theme.px(HEIGHT))
+
+    def _dress_window(self) -> bool:
+        """Everything about the window frame itself, in one place.
+
+        The rounded corners and the dark title bar come from DWM and only exist
+        on Windows 11; the icon is drawn by `tray.make_icon`, so the panel and
+        the notification area are the same picture rather than the panel wearing
+        Tk's feather while the tray wears the microphone.
+        """
+        self._put_window_icon()
+        return theme.dress_window(self._root, self._colours)
+
+    def _on_map(self, event=None) -> None:
+        """Put the window attributes back, every time the window comes up.
+
+        Mapping a window resets them. That is the same reason the chip rewrites
+        `WS_EX_NOACTIVATE` on every `<Map>`, and it is not a theory: measured here,
+        a corner preference written before the first map reads back as "not
+        rounded" afterwards, and one written after the map sticks. So this is done
+        both before and after, because `<Map>` arrives on a later loop iteration
+        than the `deiconify` that caused it and neither call alone is enough.
+        """
+        if event is not None and event.widget is not self._root:
+            return
+        self._dress_window()
+
+    def _put_window_icon(self) -> None:
+        """The window icon, in the sizes Windows asks a title bar for.
+
+        Tk's own default is the Tcl/Tk feather, which is the one thing about an
+        otherwise finished window that still says "sample application". The tray
+        already draws a microphone in code, so the panel borrows that rather than
+        shipping a second asset — and it follows the theme with it.
+
+        Drawn once per theme, not once per map: five Pillow renders at four times
+        the size is real work for an icon that only changes when the colours do.
+        The `PhotoImage`s are held on the panel because Tk keeps no reference of
+        its own, and a collected one leaves the title bar with no icon and nothing
+        in the log to say why.
+        """
+        if self._icon_theme == self._theme_name and self._window_icon:
+            return
+        sizes = (16, 24, 32, 48, 64)
+        try:
+            images = [
+                ImageTk.PhotoImage(tray.make_icon(False, size, self._colours))
+                for size in sizes
+            ]
+        except tk.TclError:
+            log.debug("could not draw the window icon", exc_info=True)
+            return
+        self._window_icon = images
+        self._icon_theme = self._theme_name
+        try:
+            self._root.iconphoto(True, *images)
+        except tk.TclError:
+            log.debug("the window took no icon", exc_info=True)
+
+    # Commands from the panel.
 
     def _press(self, _event=None) -> None:
         # In toggle mode one press is the whole gesture, so the release has
@@ -554,23 +712,36 @@ class Panel:
         """Ask the app to run the own-word check. It owns the model and the reply."""
         self._commands.put("check_words")
 
+    def _pick_language(self) -> None:
+        self._commands.put(("set_language", self._language.get()))
+
+    # Values the app writes back.
+
     def set_hotkey(self, label: str) -> str:
         """Publish the combination in effect in the field and in the footer."""
         self._capturing = False
         self._hotkey_text = label
         self._hotkey_field.configure(text=label)
+        self._hotkey_field.set_active(False)
         self._footer.configure(text=self._footer_text(label))
-        self._hotkey_hint.configure(text=text.t("hint_idle"), fg="#777777")
+        self._hotkey_hint.configure(
+            text=text.t("hint_idle"), fg=self._colours.text_subtle
+        )
         return label
 
     def show_capture(self) -> None:
         """The field is waiting for a combination now."""
         self._capturing = True
         self._hotkey_field.configure(text=text.t(_CAPTURE_PROMPT))
-        self._hotkey_hint.configure(text=text.t("hint_escape"), fg="#777777")
+        self._hotkey_field.set_active(True)
+        self._hotkey_hint.configure(
+            text=text.t("hint_escape"), fg=self._colours.text_subtle
+        )
 
     def set_hotkey_hint(self, message: str, error: bool = False) -> None:
-        self._hotkey_hint.configure(text=message, fg="#b02a30" if error else "#1f7a34")
+        self._hotkey_hint.configure(
+            text=message, fg=self._colours.danger if error else self._colours.success
+        )
 
     def set_live_typing(self, value: bool) -> None:
         """Show the switch as the disk and the app actually hold it."""
@@ -581,6 +752,9 @@ class Panel:
 
     def set_correct_words(self, value: bool) -> None:
         self._correct_words.set(bool(value))
+
+    def set_autostart(self, value: bool) -> None:
+        self._autostart.set(bool(value))
 
     def set_word_count(self, count: int) -> None:
         """Say how many words the correction pass has to work with."""
@@ -594,9 +768,7 @@ class Panel:
 
     def set_checking_words(self, running: bool) -> None:
         """The check owns the model for a couple of seconds, so it is held down."""
-        self._check_words_button.configure(
-            state="disabled" if running else "normal"
-        )
+        self._check_words_button.set_enabled(not running)
         if running:
             self.set_option_hint(text.t("words_check_hint"))
 
@@ -612,112 +784,22 @@ class Panel:
         self.set_option_hint(
             text.t("words_check_done", known=len(known), total=total)
         )
-        body = "\n".join(
+        report = "\n".join(
             vocabulary.report_lines(config.PHRASES_FILE, known, missing)
         )
         messagebox.showinfo(
             f"{config.APP_NAME} {config.VERSION} — "
             f"{text.t('report_words_title')}",
-            body,
+            report,
             parent=self._root if self._visible else None,
         )
 
-    def set_autostart(self, value: bool) -> None:
-        self._autostart.set(bool(value))
-
     def set_option_hint(self, message: str, error: bool = False) -> None:
-        self._options_hint.configure(text=message, fg="#b02a30" if error else "#1f7a34")
+        self._options_hint.configure(
+            text=message, fg=self._colours.danger if error else self._colours.success
+        )
 
-    def show(self) -> None:
-        self._visible = True
-        self._root.deiconify()
-        self._root.attributes("-topmost", True)
-
-    def hide(self) -> None:
-        self._visible = False
-        self._root.withdraw()
-
-    def present(self) -> None:
-        """Show the panel and bring it to the front, focus included.
-
-        Used by the tray, where the click is a deliberate act. The hotkey must
-        not do this: taking the focus away from the window the user dictated
-        into would send the words to the panel instead.
-        """
-        self.show()
-        self._root.lift()
-        self._root.focus_force()
-
-    def set_ready(self, model: str, device) -> None:
-        self._model.configure(text=f"{model}")
-        self._device = str(device)
-        self._set_status_key("status_ready", "#1f7a34")
-        self._root.title(self._title())
-
-    def set_recording(self, recording: bool) -> None:
-        self._recording = recording
-        if recording:
-            self._set_status_key("status_recording", "#b02a30")
-            self._stop_button.configure(state="normal")
-            self._overlay.show()
-        else:
-            self._set_status_key("status_ready", "#1f7a34")
-            self._stop_button.configure(state="disabled")
-            self._overlay.hide()
-        self._paint_record_button()
-
-    def _paint_record_button(self) -> None:
-        """The hold button is the one label that depends on the state as well.
-
-        Repainted on its own so a change of language reaches it: it is neither a
-        plain message nor owned by one call, since `set_recording` writes it in
-        both directions.
-        """
-        if self._recording:
-            self._record_button.configure(
-                text=text.t("record_running"), bg="#f3d6d6",
-                activebackground="#f3d6d6", state="disabled",
-            )
-        else:
-            self._record_button.configure(
-                text=text.t("record_toggle" if self._toggle else "record_hold"),
-                bg="SystemButtonFace", activebackground="SystemButtonFace",
-                state="normal",
-            )
-
-    def set_status(self, message: str) -> None:
-        """A status line that comes from the app, shown as it came."""
-        self._status_key = ""
-        self._status_raw = message
-        self._status_color = "#b02a30"
-        self._status.configure(text=message, fg=self._status_color)
-
-    def set_error(self, message: str) -> None:
-        self._set_status_key("status_error", "#b02a30")
-        self.append_note(message)
-
-    def _set_status_key(self, key: str, color: str) -> None:
-        self._status_key = key
-        self._status_raw = ""
-        self._status_color = color
-        self._status.configure(text=text.t(key), fg=color)
-
-    def _refresh_status(self) -> None:
-        if self._status_key:
-            self._status.configure(text=text.t(self._status_key), fg=self._status_color)
-        elif self._status_raw:
-            self._status.configure(text=self._status_raw, fg=self._status_color)
-
-    def _title(self) -> str:
-        """`WinVosk <version>`, plus the device once the engine has named one.
-
-        The release is in the title rather than only in `--diagnose`, because a
-        bug report starts with the title of the window that misbehaved.
-        """
-        name = f"{config.APP_NAME} {config.VERSION}"
-        if not self._device:
-            return name
-        return f"{name} — {text.t('title_input', device=self._device)}"
+    # The transcript.
 
     def set_text(self, text: str, partial: str) -> None:
         self._text = text
@@ -739,12 +821,114 @@ class Panel:
         if extra:
             parts.append(f"\n[{extra}]")
         body = " ".join(part.strip() for part in parts if part and part.strip())
-        self._box.configure(state="normal")
-        self._box.delete("1.0", "end")
-        if body:
-            self._box.insert("1.0", body)
-        self._box.configure(state="disabled")
-        self._box.see("end")
+        self._box.render(body)
+
+    # Window state.
+
+    def show(self) -> None:
+        self._visible = True
+        self._root.deiconify()
+        self._root.attributes("-topmost", True)
+        self._dress_window()
+
+    def hide(self) -> None:
+        self._visible = False
+        self._root.withdraw()
+
+    def present(self) -> None:
+        """Show the panel and bring it to the front, focus included.
+
+        Used by the tray, where the click is a deliberate act. The hotkey must
+        not do this: taking the focus away from the window the user dictated
+        into would send the words to the panel instead.
+        """
+        self.show()
+        self._root.lift()
+        self._root.focus_force()
+
+    def set_ready(self, model: str, device) -> None:
+        self._model.configure(text=f"{model}")
+        self._device = str(device)
+        self._set_status_key("status_ready", "success")
+        self._root.title(self._title())
+
+    def set_recording(self, recording: bool) -> None:
+        self._recording = recording
+        if recording:
+            self._set_status_key("status_recording", "danger")
+            self._stop_button.set_enabled(True)
+            self._overlay.show()
+        else:
+            self._set_status_key("status_ready", "success")
+            self._stop_button.set_enabled(False)
+            self._overlay.hide()
+        self._paint_record_button()
+
+    def _paint_record_button(self) -> None:
+        """The hold button is the one label that depends on the state as well.
+
+        Repainted on its own so a change of language reaches it: it is neither a
+        plain message nor owned by one call, since `set_recording` writes it in
+        both directions. While a recording runs it is not disabled but busy: a
+        greyed button says "unavailable", and this one is saying "live".
+        """
+        self._record_button.set_busy(self._recording)
+        if self._recording:
+            self._record_button.configure(text=text.t("record_running"))
+        else:
+            self._record_button.configure(
+                text=text.t("record_toggle" if self._toggle else "record_hold")
+            )
+
+    def set_status(self, message: str) -> None:
+        """A status line that comes from the app, shown as it came."""
+        self._status_key = ""
+        self._status_raw = message
+        self._status_role = "danger"
+        self._status.configure(text=message, fg=self._colours.danger)
+        self._dot.set_colour(self._colours.danger)
+
+    def set_error(self, message: str) -> None:
+        self._set_status_key("status_error", "danger")
+        self.append_note(message)
+
+    def _set_status_key(self, key: str, role: str) -> None:
+        self._status_key = key
+        self._status_raw = ""
+        self._status_role = role
+        self._status.configure(text=text.t(key), fg=self._status_colour(role))
+        self._dot.set_colour(self._status_colour(role))
+
+    def _status_colour(self, role: str) -> str:
+        return {
+            "success": self._colours.success,
+            "danger": self._colours.danger,
+        }.get(role, self._colours.text_muted)
+
+    def _refresh_status(self) -> None:
+        """Put the status line back from the key or the raw message, in its role."""
+        if self._status_key:
+            self._status.configure(
+                text=text.t(self._status_key), fg=self._status_colour(self._status_role)
+            )
+        elif self._status_raw:
+            self._status.configure(
+                text=self._status_raw, fg=self._status_colour(self._status_role)
+            )
+        self._dot.set_colour(self._status_colour(self._status_role))
+
+    def _title(self) -> str:
+        """`WinVosk <version>`, plus the device once the engine has named one.
+
+        The release is in the title rather than only in `--diagnose`, because a
+        bug report starts with the title of the window that misbehaved.
+        """
+        name = f"{config.APP_NAME} {config.VERSION}"
+        if not self._device:
+            return name
+        return f"{name} — {text.t('title_input', device=self._device)}"
+
+    # The loop.
 
     def schedule(self, callback: Callable[[], None]) -> None:
         self._root.after(POLL_MS, callback)
@@ -753,6 +937,7 @@ class Panel:
         self._root.mainloop()
 
     def destroy(self) -> None:
+        theme.reset()
         try:
             self._overlay.destroy()
         except tk.TclError:

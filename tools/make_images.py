@@ -24,6 +24,7 @@ import ctypes.wintypes as wt
 import math
 import queue
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,13 +32,19 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from PIL import Image, ImageDraw, ImageFont
 
-from winvosk import config, overlay, panel as panel_mod, text
+from winvosk import config, overlay, panel as panel_mod, text, theme
 
 OUT = ROOT / "docs" / "img"
 FONTS = Path(r"C:\Windows\Fonts")
 
 # The palette, taken from the module so a colour change in the app reaches the
-# images without a second edit here.
+# images without a second edit here. `set_palette` first, because the chip's
+# colours are module constants that move with the theme rather than attributes of
+# the chip: the images have to be told which theme they are drawing before they
+# read them, or a dark chip illustration ships next to a light panel.
+THEME = "light"
+overlay.set_palette(THEME)
+PALETTE = theme.palette(THEME)
 BAR_LOW = overlay._rgb(overlay._BAR_LOW)
 BAR_MID = overlay._rgb(overlay._BAR_MID)
 BAR_HIGH = overlay._rgb(overlay._BAR_HIGH)
@@ -62,12 +69,26 @@ class _BitmapInfo(ctypes.Structure):
 
 
 def capture(hwnd: int) -> Image.Image:
-    """One window as a Pillow image, rendered by Windows rather than scraped."""
+    """One window as a Pillow image, rendered by Windows rather than scraped.
+
+    Two ways this can quietly ruin a good README image, both refused here rather
+    than caught afterwards. The window can come back flat, when it was never
+    painted — caught by the colour count below. And it can come back the right
+    colours at the wrong size: measured on a loaded machine, a window that had not
+    finished being mapped reported a 160x28 rect and produced a 1 kB PNG of a
+    title bar, which passed the colour check and overwrote a good screenshot. So
+    the area has to be plausible too, not merely non-zero.
+    """
     rect = wt.RECT()
     ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
     width, height = rect.right - rect.left, rect.bottom - rect.top
     if width <= 0 or height <= 0:
         raise RuntimeError(f"window {hwnd} has no area")
+    if width < 400 or height < 300:
+        raise RuntimeError(
+            f"window {hwnd} reports {width}x{height}, which is not a panel: it "
+            f"has not finished being mapped, so this is not a screenshot"
+        )
     user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
     window_dc = user32.GetWindowDC(hwnd)
     memory_dc = gdi32.CreateCompatibleDC(window_dc)
@@ -113,8 +134,21 @@ def _toplevel(widget) -> int:
 
 
 def _settle(widget) -> None:
-    widget.update_idletasks()
-    widget.update()
+    """Let the window finish becoming what it is going to be, then photograph it.
+
+    Several passes, not one. `Panel` writes the window's DWM attributes — rounded
+    corners, no system border, the light or dark title bar — from its own `<Map>`
+    handler, and DWM repaints the frame a frame later than Tk processes the event.
+    One `update()` photographs the default caption instead: measured, the caption
+    comes back as a flat (63, 63, 63) whatever theme the panel is in, and only
+    after a few passes does it come back as (243, 243, 243) on light and
+    (32, 32, 32) on dark. The same applies to the client area, which Tk fills over
+    several passes while a card is painting itself.
+    """
+    for _ in range(6):
+        widget.update_idletasks()
+        widget.update()
+        time.sleep(0.05)
 
 
 def panel_shots() -> list[Path]:
@@ -167,20 +201,39 @@ def _keyed_to_alpha(image: Image.Image) -> Image.Image:
 
     The plate is laid down on `_COLOR_KEY`, because Tk has to be told to make one
     colour transparent and that one is easier to key on. Pillow has no such
-    option, so the key goes to alpha here. The test is not "is this the key
-    colour" but "is this blue dominant": resampling blends the key into its
-    neighbours, and an equality test leaves a rim of half-keyed pixels exactly
-    where the eye notices. Nothing in the chip is blue dominant — the plate is
-    grey and the bars are pink, where red is the largest channel.
+    option, so the key goes to alpha here.
+
+    The test is "is this pixel the key, or on the way to it from the chip's own
+    outermost colour", and not the equality test alone: resampling blends the key
+    into its neighbour, and an equality test leaves a rim of half-keyed pixels
+    exactly where the eye notices. So the key is compared against the glow — the
+    outermost layer of the plate, and therefore the only colour the key is ever
+    blended into — and a pixel goes when the key is nearer than the glow is.
+
+    It used to be "is this blue dominant", which was a way of saying the same
+    thing for one palette: the key is `#0000fe`, and on the old chip nothing else
+    was blue dominant, because the plate was grey and the bars were pink where red
+    is the largest channel. On the light theme the bars are indigo and the clock
+    is a blue-grey, so that test punched out the two things it was supposed to
+    keep. A test that names the key and the colour it blends into does not care
+    what the palette is.
     """
+    key = theme.rgb(overlay._COLOR_KEY)
+    glow = theme.rgb(PALETTE.chip_glow)
     rgba = image.convert("RGBA")
     pixels = rgba.load()
+
+    def distance(pixel, other) -> float:
+        return sum((a - b) ** 2 for a, b in zip(pixel, other))
+
     for y in range(rgba.height):
         for x in range(rgba.width):
-            red, green, blue, _ = pixels[x, y]
-            if blue - max(red, green) > 12:
+            red, green, blue, alpha = pixels[x, y]
+            pixel = (red, green, blue)
+            if distance(pixel, key) <= distance(pixel, glow):
                 pixels[x, y] = (red, green, blue, 0)
     return rgba
+
 
 
 def _chip_frame(heights: list[float], seconds: int, scale: int = 4,
@@ -194,8 +247,10 @@ def _chip_frame(heights: list[float], seconds: int, scale: int = 4,
 
     `smooth` trades the hard pixels of a nearest-neighbour blow-up for a soft
     one, which is what a magnified illustration wants; the animated chip stays on
-    the nearest-neighbour fold so a bar never blurs as it grows. Either way the
-    key is punched out, and the result carries real alpha.
+    the nearest-neighbour fold so a bar never blurs as it grows.
+
+    The colour key is punched to alpha on the way out, so the result carries real
+    alpha and the banner pastes it as a mask rather than as a rectangle.
     """
     plate = overlay.build_plate()
     frame = plate.copy()
@@ -213,8 +268,11 @@ def _chip_frame(heights: list[float], seconds: int, scale: int = 4,
             draw.rectangle(
                 (left, top_y, right - 1, bottom_y - 1), fill=colour
             )
-    clock = ImageFont.truetype(str(FONTS / "consola.ttf"), 7)
-    draw.text((overlay.WIDTH // 2, overlay.CLOCK_Y - 2),
+    # The clock's point size comes from the module rather than being written here,
+    # for the same reason the colours do: a size typed in two places is a size that
+    # will be right in one of them.
+    clock = ImageFont.truetype(str(FONTS / "consola.ttf"), overlay.CLOCK_SIZE)
+    draw.text((overlay.WIDTH // 2, overlay.CLOCK_Y),
               f"{seconds // 60}:{seconds % 60:02d}",
               font=clock, fill=CLOCK, anchor="mm")
 
@@ -292,6 +350,26 @@ def _gradient(size: tuple[int, int], top: tuple[int, int, int],
     return image.resize((width, height))
 
 
+# The banner's page. A dark hero rather than a screenshot is a deliberate choice
+# and stays; what follows from the palette is the accent on it, because a literal
+# is how a page ends up advertising a colour the product no longer has anywhere
+# in it. Every colour below is one of these two functions of `PALETTE`, so a
+# theme change moves the whole banner with it.
+_PAGE = (13, 11, 17)
+
+
+def _tint(colour: tuple[int, int, int], share: float) -> tuple[int, int, int]:
+    """`colour` mixed towards white by `share`, 0.0 leaving it alone."""
+    return tuple(
+        max(0, min(255, round(c + (255 - c) * share))) for c in colour
+    )
+
+
+def _page_tint(share: float) -> tuple[int, int, int]:
+    """The page lightened, for text and for the keycaps sitting on it."""
+    return _tint(_PAGE, share)
+
+
 def _keycap(draw: ImageDraw.ImageDraw, x: int, y: int, label: str,
             font: ImageFont.FreeTypeFont, width: int = 46) -> int:
     """One key in the hotkey, drawn as a cap. Returns the width it used.
@@ -303,32 +381,43 @@ def _keycap(draw: ImageDraw.ImageDraw, x: int, y: int, label: str,
     height = 40
     draw.rounded_rectangle(
         (x, y, x + width, y + height), radius=8,
-        fill=(46, 38, 54), outline=(96, 84, 108), width=1,
+        fill=_page_tint(0.25), outline=_page_tint(0.55), width=1,
     )
     draw.text((x + width / 2, y + height / 2 + 1), label, font=font,
-              fill=(238, 234, 242), anchor="mm")
+              fill=_page_tint(0.90), anchor="mm")
     return width
 
 
-def _chip_card(scale: int = 5) -> Image.Image:
+def _chip_card(scale: int = 4, smooth: bool = True) -> Image.Image:
     """The real chip, blown up, as the right half of the banner.
 
     The plate comes from `overlay.build_plate` and the bars are drawn with the
     module's geometry and ramp, so this is the chip the app shows — a photograph
-    of the window itself would come out at 87x35 and lose the rim.
+    of the window itself would come out at 92x40 and lose the rim.
+
+    Four times, not five. The chip's bars are two pixels wide with three of
+    white between them, and a fifth of that is eight-pixel bars almost touching:
+    on the old dark chip that read as texture, on the light one it reads as a
+    barcode. Four leaves sixteen pixels of gap against an eight pixel bar, which
+    is what an equalizer looks like rather than what a fence looks like.
+
+    The heights are inside the chip's own range, which the exaggerated set this
+    replaces was not: `BAR_SPAN_MAX` is 4.7 over an idle of 3, so the tallest a
+    bar ever gets is a half-height of 7.7, and a number twice that reaches past
+    the top of the plate and crosses the clock on its way. On a dark chip against
+    a dark page that read as energy; on a white plate it read as a mistake.
     """
-    card = _chip_frame([9.0, 13.5, 17.0, 19.5, 20.0, 19.0, 17.5, 14.0, 10.5,
-                        8.5, 7.0], 12, scale=scale, smooth=True)
-    return card
+    return _chip_frame([3.0, 4.6, 6.2, 7.2, 7.6, 7.4, 7.0, 6.2, 5.0, 3.8, 3.0],
+                       12, scale=scale, smooth=smooth)
 
 
 def banner() -> Path:
     """The header image: the product's own colours, type, keycaps and chip."""
     width, height = 1280, 420
-    image = _gradient((width, height), (24, 19, 30), (13, 11, 17)).convert("RGBA")
+    image = _gradient((width, height), _page_tint(0.06), _PAGE).convert("RGBA")
     glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     ImageDraw.Draw(glow).ellipse(
-        (820, -160, 1500, 470), fill=(255, 138, 184, 40)
+        (820, -160, 1500, 470), fill=theme.rgb(PALETTE.accent) + (40,)
     )
     from PIL import ImageFilter
 
@@ -342,24 +431,24 @@ def banner() -> Path:
     key = ImageFont.truetype(str(FONTS / "seguisb.ttf"), 19)
     bullet = ImageFont.truetype(str(FONTS / "segoeui.ttf"), 22)
 
-    draw.text((64, 58), "WinVosk", font=wordmark, fill=(255, 255, 255))
+    draw.text((64, 58), "WinVosk", font=wordmark, fill=_page_tint(1.0))
     draw.text((68, 152), "Offline dictation for Windows.", font=tagline,
-              fill=(240, 236, 242))
+              fill=_page_tint(0.92))
     draw.text((68, 188), "Any language. Nothing leaves the machine.",
-              font=tagline, fill=(233, 184, 205))
+              font=tagline, fill=_tint(theme.rgb(PALETTE.accent), 0.55))
 
     # The hotkey, as caps, then what it does.
     x = 68
     for label, cap in (("Win", 58), ("+", 26), ("Ctrl", 62), ("+", 26), ("→", 46)):
         used = _keycap(draw, x, 244, label, key, width=cap)
         x += used + 8
-    draw.text((x + 14, 264), "or", font=hint, fill=(150, 146, 158), anchor="lm")
+    draw.text((x + 14, 264), "or", font=hint, fill=_page_tint(0.55), anchor="lm")
     x += 66
     for label, cap in (("Alt", 52), ("+", 26), ("Win", 62)):
         used = _keycap(draw, x, 244, label, key, width=cap)
         x += used + 8
     draw.text((68, 308), "hold to speak, release to type at the caret",
-              font=hint, fill=(150, 146, 158))
+              font=hint, fill=_page_tint(0.55))
 
     facts = (
         "6.0 MB executable",
@@ -372,22 +461,22 @@ def banner() -> Path:
     for index, line in enumerate(facts):
         if index == 2:
             x, y = 68, 382
-        draw.text((x, y), "•", font=bullet, fill=(255, 138, 184))
-        draw.text((x + 18, y - 4), line, font=fact, fill=(232, 228, 236))
+        draw.text((x, y), "•", font=bullet, fill=_tint(theme.rgb(PALETTE.accent), 0.35))
+        draw.text((x + 18, y - 4), line, font=fact, fill=_page_tint(0.88))
         x += 18 + draw.textlength(line, font=fact) + 44
 
     # `paste` with the card as its own mask, not `alpha_composite`: the method
     # form of `alpha_composite` returns None in this Pillow, which would leave
     # the banner as a blank canvas one line later.
-    card = _chip_card().convert("RGBA")
-    image.paste(card, (width - 470, (height - 175) // 2), card)
+    card = _chip_card()
+    image.paste(card, (width - card.width - 40, (height - card.height) // 2), card)
     draw = ImageDraw.Draw(image, "RGBA")
     note = ImageFont.truetype(str(FONTS / "segoeui.ttf"), 19)
     draw.text((width - 470 + 70, height - 62),
               "the chip, exactly as it is drawn on screen",
-              font=note, fill=(140, 136, 148), anchor="mm")
+              font=note, fill=_page_tint(0.62), anchor="mm")
 
-    draw.rectangle((0, height - 4, width, height), fill=(255, 138, 184, 150))
+    draw.rectangle((0, height - 4, width, height), fill=_tint(theme.rgb(PALETTE.accent), 0.25))
     path = OUT / "banner.png"
     image.convert("RGB").save(path)
     return path

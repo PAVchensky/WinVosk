@@ -130,6 +130,54 @@ def case_language_setting() -> bool:
     return ok
 
 
+def case_theme_setting() -> bool:
+    print("\ncase 4b: the stored theme, and what an unusable one costs", flush=True)
+    original = settings.SETTINGS_FILE
+    with tempfile.TemporaryDirectory(prefix="winvosk_theme_probe_") as work:
+        target = Path(work) / "settings.json"
+        settings.SETTINGS_FILE = target
+        try:
+            ok = True
+            print(f"  shipped default         -> {config.THEME_DEFAULT!r} of "
+                  f"{list(config.THEMES)}", flush=True)
+            ok = ok and config.THEME_DEFAULT in config.THEMES
+            for payload, label, expected in (
+                (None, "missing file", config.THEME_DEFAULT),
+                ('{"theme": "dark"}', "dark", "dark"),
+                ('{"theme": "light"}', "light", "light"),
+                ('{"theme": "sepia"}', "a theme we do not have", config.THEME_DEFAULT),
+                ('{"theme": 7}', "a number", config.THEME_DEFAULT),
+                ('{"theme": null}', "null", config.THEME_DEFAULT),
+                ('{"theme": ""}', "an empty string", config.THEME_DEFAULT),
+            ):
+                if payload is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.write_text(payload, encoding="utf-8")
+                got = settings.theme_name()
+                good = got == expected
+                ok = ok and good
+                print(f"  {label:28s} -> {got!r} expected {expected!r} {good}", flush=True)
+            stored = settings.store_theme_name("dark")
+            print(f"  store_theme_name('dark') -> {stored}, reads back "
+                  f"{settings.theme_name()!r}", flush=True)
+            ok = ok and stored and settings.theme_name() == "dark"
+            refused = settings.store_theme_name("sepia")
+            print(f"  store_theme_name('sepia') -> {refused}, still "
+                  f"{settings.theme_name()!r}", flush=True)
+            ok = ok and not refused and settings.theme_name() == "dark"
+            # A theme write must not disturb anything else stored beside it,
+            # which is the same invariant every other switch keeps.
+            settings.store_hotkeys(["win+shift+f5"])
+            settings.store_theme_name("light")
+            specs = settings.hotkeys()
+            print(f"  the hotkey list survives a theme write: {specs}", flush=True)
+            ok = ok and specs == ["win+shift+f5"] and settings.theme_name() == "light"
+        finally:
+            settings.SETTINGS_FILE = original
+    return ok
+
+
 def case_switching() -> bool:
     print("\ncase 5: switching really changes what `t` answers", flush=True)
     saved = text.language()
@@ -161,6 +209,7 @@ def main() -> None:
         case_placeholders(),
         case_no_stray_literals(),
         case_language_setting(),
+        case_theme_setting(),
         case_switching(),
     ]
     print(f"\n{sum(results)}/{len(results)} check group(s) passed", flush=True)

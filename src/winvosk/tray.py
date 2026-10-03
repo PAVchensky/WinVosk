@@ -8,16 +8,11 @@ import time
 from collections.abc import Callable
 
 import pystray
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
-from . import config, text
+from . import config, text, theme
 
 log = logging.getLogger(__name__)
-
-_IDLE_BG = (52, 58, 64, 255)
-_IDLE_FG = (228, 232, 236, 255)
-_ACTIVE_BG = (176, 42, 48, 255)
-_ACTIVE_FG = (255, 236, 236, 255)
 
 # How long to wait for `Shell_NotifyIcon` before calling the tray dead, and how
 # often to look. The call itself lands in a thread of pystray's own, on the far
@@ -27,40 +22,89 @@ _ACTIVE_FG = (255, 236, 236, 255)
 TRAY_READY_TIMEOUT = 5.0
 TRAY_POLL_INTERVAL = 0.05
 
+# Drawn four times the requested size and folded down with BOX, the same rule the
+# chip's plate and every card in the panel follow: an average of each block is
+# the only filter that cannot overshoot, and a glyph on a saturated field is the
+# worst case for a filter that does.
+_SUPERSAMPLE = 4
 
-def make_icon(recording: bool = False, size: int = 64) -> Image.Image:
-    """Draw a microphone glyph so no binary asset has to be shipped."""
-    background = _ACTIVE_BG if recording else _IDLE_BG
-    foreground = _ACTIVE_FG if recording else _IDLE_FG
+
+def make_icon(
+    recording: bool = False, size: int = 64,
+    palette: theme.Palette | None = None,
+) -> Image.Image:
+    """Draw a microphone glyph so no binary asset has to be shipped.
+
+    A rounded plate in the theme's accent, or in its danger while a recording
+    runs, with a soft top-to-bottom gradient and a highlight along the top edge:
+    at 16 px in the notification area a flat fill reads as a coloured square, and
+    the gradient is what makes it read as a lit surface instead. Idle and
+    recording differ in colour alone, so the shape stays a microphone and the
+    state is carried by hue rather than by a second drawing.
+    """
+    colours = theme.palette() if palette is None else palette
     scale = size / 64
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    box = (int(2 * scale), int(2 * scale), int(62 * scale), int(62 * scale))
-    draw.rounded_rectangle(box, radius=int(14 * scale), fill=background)
+    step = _SUPERSAMPLE
+    big = max(1, int(round(size * step)))
+    plate = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(plate)
+
+    top = theme.rgb(
+        colours.tray_active_bg if recording else colours.tray_idle_bg
+    )
+    bottom = tuple(
+        max(0, min(255, channel - 38)) for channel in top
+    )
+    body = Image.new("RGB", (big, big), bottom)
+    shade = ImageDraw.Draw(body)
+    for row in range(big):
+        ratio = row / max(1, big - 1)
+        shade.line(
+            (0, row, big, row),
+            fill=tuple(
+                round(top[channel] + (bottom[channel] - top[channel]) * ratio)
+                for channel in range(3)
+            ),
+        )
+    mask = Image.new("L", (big, big), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        (0, 0, big - 1, big - 1), radius=int(14 * scale * step), fill=255
+    )
+    plate.paste(body, (0, 0), mask)
+
+    # A highlight along the top edge, faded out by the middle: what makes a
+    # rounded plate look like a surface with a light on it rather than a shape.
+    gloss = Image.new("L", (big, big), 0)
+    ImageDraw.Draw(gloss).ellipse(
+        (-big // 3, -int(big * 0.62), big + big // 3, int(big * 0.52)), fill=64
+    )
+    gloss = gloss.filter(ImageFilter.GaussianBlur(big * 0.05))
+    plate.paste(
+        Image.new("RGBA", (big, big), (255, 255, 255, 255)), (0, 0),
+        ImageChops.multiply(gloss, mask),
+    )
+
+    foreground = theme.rgb(
+        colours.tray_active_fg if recording else colours.tray_idle_fg
+    )
+    _microphone(draw, big, scale, step, foreground)
+    return plate.resize((size, size), Image.Resampling.BOX)
+
+
+def _microphone(draw: ImageDraw.ImageDraw, size: int, scale: float, step: int,
+                colour: tuple[int, int, int]) -> None:
+    """The glyph: a capsule, the arc under it, the stem and the base."""
+    at = lambda v: int(round(v * scale * step))  # noqa: E731 - a local unit helper
+    width = max(1, int(round(3 * scale * step)))
     draw.rounded_rectangle(
-        (int(26 * scale), int(12 * scale), int(38 * scale), int(34 * scale)),
-        radius=int(6 * scale),
-        fill=foreground,
+        (at(26), at(12), at(38), at(34)), radius=at(6), fill=colour
     )
     draw.arc(
-        (int(20 * scale), int(26 * scale), int(44 * scale), int(50 * scale)),
-        start=0,
-        end=180,
-        fill=foreground,
-        width=max(1, int(3 * scale)),
-    )
-    width = max(1, int(3 * scale))
-    draw.line(
-        (int(32 * scale), int(50 * scale), int(32 * scale), int(44 * scale)),
-        fill=foreground,
+        (at(20), at(26), at(44), at(50)), start=0, end=180, fill=colour,
         width=width,
     )
-    draw.line(
-        (int(24 * scale), int(54 * scale), int(40 * scale), int(54 * scale)),
-        fill=foreground,
-        width=width,
-    )
-    return image
+    draw.line((at(32), at(50), at(32), at(44)), fill=colour, width=width)
+    draw.line((at(24), at(54), at(40), at(54)), fill=colour, width=width)
 
 
 class TrayIcon:
@@ -71,17 +115,37 @@ class TrayIcon:
         is_recording: Callable[[], bool] = lambda: False,
         hotkey_label: str | None = None,
         is_toggle: Callable[[], bool] = lambda: False,
+        palette: theme.Palette | None = None,
     ) -> None:
         self._commands = commands
         self._is_panel_visible = is_panel_visible
         self._is_recording = is_recording
         self._is_toggle = is_toggle
         self._hotkey_label = config.hotkey_label() if hotkey_label is None else hotkey_label
+        self._palette = palette
+        self._recording_image = make_icon(True, palette=palette)
+        self._idle_image = make_icon(False, palette=palette)
         self._icon = pystray.Icon(
-            "winvosk", make_icon(False), config.APP_NAME, menu=self._menu()
+            "winvosk", self._idle_image, config.APP_NAME, menu=self._menu()
         )
-        self._recording_image = make_icon(True)
-        self._idle_image = make_icon(False)
+
+    def set_theme(self, name: str) -> None:
+        """Redraw both icons in another theme, and put up the idle one.
+
+        The tray icon follows the panel's theme rather than keeping its own, so
+        a dark panel does not sit next to a light-blue microphone. Idle and
+        recording are both drawn up front, because the notification area keeps a
+        reference to the bitmap it was given and swapping one in later means
+        asking the shell to redraw on every state change.
+        """
+        self._palette = theme.palette(name)
+        self._recording_image = make_icon(True, palette=self._palette)
+        self._idle_image = make_icon(False, palette=self._palette)
+        try:
+            self._icon.icon = self._recording_image if self._is_recording() else self._idle_image
+            self._icon.update_menu()
+        except Exception:
+            log.exception("could not refresh the tray icon")
 
     def _menu(self) -> pystray.Menu:
         # Every label is a callable, so update_menu() repaints the whole menu in

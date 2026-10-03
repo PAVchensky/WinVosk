@@ -21,15 +21,26 @@ repository.
 ## Release
 
 `VERSION` in `src\winvosk\config.py` is the single source of the release number,
-currently **1.3**. It is not a comment and not a tag nobody reads: `--diagnose`
+currently **1.6.3**. It is not a comment and not a tag nobody reads: `--diagnose`
 prints it on its first line, the panel puts it in the window title, and the
 own-word report and the frozen `--diagnose` dialog carry it.
 `winvosk\__init__.py` derives `__version__` from it rather than repeating it —
 a second literal there already disagreed with this one, in a different format.
 
-**Bump it with every release.** `1.0` → `1.1` for added or changed behaviour,
-`2.0` when something a user depends on changes or is removed. A patch release
-gets `1.0.1` only for a fix that changes no behaviour a user can observe.
+**The scheme is `MAJOR.MINOR.PATCH` and all three parts are always written.** A
+two part number sorts wrongly in a release list and has nowhere to put a patch.
+**Bump it with every release:**
+
+- **PATCH** — a fix that changes nothing a user can observe. `1.6.3` → `1.6.4`.
+- **MINOR** — behaviour added, or behaviour changed in a way that is still
+  backwards compatible. `1.6.4` → `1.7.0`.
+- **MAJOR** — something a user depends on changes or is removed: `settings.json`
+  keys, a hotkey default, a switch that stops existing, the insertion method.
+  `1.7.0` → `2.0.0`.
+
+A documentation-only change does not warrant a release of its own; it rides along
+with whatever code change it documents. That is why the number is not bumped for
+every commit, only per release.
 
 A release is: `VERSION` bumped, all six checks in § Verification green, the
 bundle rebuilt with `tools\build_exe.py`, the archive staged with
@@ -55,11 +66,14 @@ them drift apart.
   and the table of every language Vosk publishes a model for. Written for someone
   who has never seen the source.
 - **`README.ru.md`** — the same guide in Russian. **The two are edited as one
-  document**: same headings in the same order, in English, with the Russian text
-  on the line under each. That is deliberate, because a GitHub anchor is derived
-  from the heading text, so a translated heading breaks every cross-link into the
-  other file. Same rule for the tables and the numbered sections. When you change
-  one, change the other in the same commit, or one of them is a lie.
+  document**: the same sections in the same order and the same headings at the
+  same levels, each written in its own language. A GitHub anchor is derived from
+  the heading text, so the anchors are per-file and differ between the two —
+  `#install-and-run` there, `#установка-и-запуск` here — and every internal link
+  is recomputed for the file it lives in. Keep them in step by section number, not
+  by string; `tools\readme_probe.py` is what notices when one file gains a section
+  and the other does not. Same rule for the tables and the numbered sections. When
+  you change one, change the other in the same commit, or one of them is a lie.
 - **`docs\HOWTO.md`** — the reference, in English: internals, layout, why each
   design decision was taken, the verification helpers, the caveats.
 - **`llms.txt`** and **`docs\instructions\setup.md`** — the short map an agent
@@ -148,7 +162,7 @@ Get-Content .\logs\<yyyy-mm-dd>.txt -Encoding UTF8 -Tail 5
 Check 2 must print a `base dir` line that is the checkout root, currently
 `base dir    : D:\AI\Vosk`; anything else means the app resolved paths somewhere
 else and the rest of the bar is meaningless. Its first line must be
-`WinVosk   : 1.3`, which is the cheap way to notice that `VERSION` was not bumped.
+`WinVosk   : 1.6.3`, which is the cheap way to notice that `VERSION` was not bumped.
 
 Check 3 must print an empty string for silence, never raise. Check 4 must print
 `VERDICT: PASS` twice: once for the hotkey, once for typing, the latter with
@@ -171,7 +185,8 @@ runs on a machine with no input at all. Run it after any change to `WinVosk.spec
 `tools\build_exe.py`, `overlay.py`, `tray.py` or `panel.py`, and against the
 built exe as well as the checkout.
 
-The tray icon is the one part of check 6 that was missing until 1.2, and it is
+The tray icon is the one part of check 6 that was missing until the 1.2 release, and
+it is
 the part that cannot be reached any other way: `pystray.Icon.run_detached()` only
 starts a thread, the icon is added from a thread of pystray's own, and the panel
 lives in the tray — so a bundle whose icon never arrives has no user interface at
@@ -194,9 +209,47 @@ that keeps the correction off the partials. Run it after touching `corrector.py`
 `tools\lang_probe.py` is the eighth: it reads the source instead of running it,
 and covers the message table and the language switch. Run it after any change to
 `text.py`, `settings.py`, `panel.py`, `tray.py` or the message part of `run.py`.
+`tools\readme_probe.py` is the ninth, same shape again, and covers the three
+GitHub-facing pages: dead anchors in each file, Cyrillic that escaped into English
+prose, control names that no longer match `text.py`, a `settings.json` example
+naming the wrong shipped language, the corrector cutoff stated backwards, and
+heading parity between the two guides. It is the only thing standing between a
+plausible sentence and a documented lie — the page once claimed the interface
+ships in Russian, and once said a word *more* than 0.75 similar is left alone,
+which is the opposite of what `corrector.CUTOFF` does. Run it after any change to
+`README.md`, `README.ru.md`, `docs\HOWTO.md`, `text.py`, `corrector.py` or
+`config.LANGUAGE_DEFAULT`.
 
 ## Invariants worth keeping
 
+- **`config` and `settings` never import `theme`.** `theme` imports `tkinter` at
+  the top; `config` and `settings` are imported by every console path
+  (`--diagnose`, `--vocab-check`, `file_transcribe --self-test`, and the headless
+  probes, none of which opens a window). The dependency runs the other way —
+  `theme` reads `config.THEMES` and `config.THEME_DEFAULT`, which is why the
+  theme names are plain strings in `config`. Inverted, a bundle missing a Tcl
+  script or `_tkinter.pyd` would fail on the import inside `--diagnose`, which is
+  the one command whose whole job is to say the bundle is broken.
+- **No colour, radius, shadow or font is written outside `theme.py` and
+  `widgets.py`.** Tk draws no rounded corner and no soft shadow, so every such
+  shape is a Pillow image made by `theme.surface()`, and a widget that needs a
+  new shade asks the palette for one by role rather than holding a hex literal.
+  A literal in a widget is how the two themes stop being one design. The same
+  goes for type: sizes are the four steps in `widgets.TYPE_*`, and the family is
+  resolved once in `theme.bind`.
+- **The window's DWM attributes are written after the map, not before.**
+  `deiconify` resets them — measured: a corner preference written before the
+  first map reads back as "not rounded" afterwards, and one written after it
+  sticks. `Panel._on_map` re-dresses the window every time, for the same reason
+  `overlay.py` puts `WS_EX_NOACTIVATE` back every time. `tk.Tk()` also hands out
+  a different `wm_frame()` handle before and after its first map, so a
+  before-the-map call looks like it worked.
+- **A `tk.Variable`'s trace is removed when its widget is.** The variables belong
+  to the panel and outlive a theme change, which is the point of them; a trace
+  left behind fires into a destroyed canvas, and because that happens inside a Tk
+  callback the exception is printed and swallowed rather than raised. The
+  symptom is a panel that no longer repaints with a clean `app.log`. See
+  `widgets.Choice._forget`.
 - **Never add the `keyboard` package.** Its Windows backend never delivers hotkeys.
   See the "Why the hotkey is hand written" section of `docs/HOWTO.md`.
 - **Never trust PortAudio's default input device.** On this machine

@@ -11,6 +11,12 @@ The microphone level is not displayed. It is gated into silence or sound and
 used to drive an animation, so the chip shows that something is being said
 without ever claiming to measure how loudly it is said.
 
+Its colours come from `theme`, like everything else in this application: the
+plate is the theme's chip surface, the rim is its chip glow and the bars are its
+chip ramp, so the chip is the same design as the panel instead of a second one.
+`set_palette` re-points the module's colour constants at a theme, which is what
+lets `tools/make_images.py` draw the chip in whatever the app is currently using.
+
 It sits horizontally centred at the bottom of the work area, which is where the
 eye already goes for a taskbar chip, and it is kept clear of the panel's own
 bottom right corner.
@@ -22,6 +28,13 @@ carries WS_EX_NOACTIVATE so the operating system itself refuses to activate it.
 Because the chip belongs to this process, keystrokes.foreign_in_front() reports
 False while it is in front, which holds the fragment back instead of typing it
 anywhere, so no extra window allowlist is needed here.
+
+On the shadow: a real drop shadow needs a layered window with per-pixel alpha,
+which is the same mechanism `-transparentcolor` uses to cut the rounded hole in
+the first place, and a window cannot be both. So the soft edge here is a halo:
+two rings at the rim, the outer one the theme's glow and the inner one its
+border, which reads as a step rather than a line. The panel itself gets a real
+shadow from DWM, because it is an ordinary window and does not need a hole.
 """
 
 from __future__ import annotations
@@ -36,24 +49,27 @@ from collections.abc import Callable
 
 from PIL import Image, ImageDraw, ImageTk
 
+from . import theme
+from .theme import rgb as _rgb
+
 log = logging.getLogger(__name__)
 
 # Geometry. Eleven 2 px sticks with a 4 px gap take 11*2 + 10*4 = 62 px, which
-# leaves a 12 px margin on each side of the 87 px window. The bar field is
-# 20 px tall and every bar straddles its middle line, so a bar of half height S
+# leaves a 15 px margin on each side of the 92 px window. The bar field is
+# 22 px tall and every bar straddles its middle line, so a bar of half height S
 # reaches BAR_MID-S to BAR_MID+S: the tallest spans the whole field and nothing
-# can be clipped at any height. The 11 pt clock sits underneath.
-WIDTH = 87
-HEIGHT = 35
+# can be clipped at any height. The clock sits underneath, clear of the bars.
+WIDTH = 92
+HEIGHT = 40
 BARS = 11
 BAR_WIDTH = 2
 BAR_GAP = 4
 BAR_MARGIN = (WIDTH - (BARS * BAR_WIDTH + (BARS - 1) * BAR_GAP)) // 2
-BAR_TOP = 1
-BAR_FIELD = 20
+BAR_TOP = 3
+BAR_FIELD = 22
 BAR_MID = BAR_TOP + BAR_FIELD // 2
-CORNER = 20
-CLOCK_Y = 27
+CORNER = 16
+CLOCK_Y = 32
 TICK_MS = 20
 MARGIN_ABOVE_TASKBAR = 5
 
@@ -103,26 +119,63 @@ PHASE_SPREAD = 2
 # the plate leaves in it simply is not on the screen, which is how the chip gets
 # rounded corners.
 _COLOR_KEY = '#0000fe'
-_BACKGROUND = '#2b2b2b'
-_BORDER = '#454545'
-_BAR_LOW = '#7d2f4f'
-_BAR_MID = '#c9527f'
-_BAR_HIGH = '#ff8ab8'
-_CLOCK = '#e9b8cd'
-_CLOCK_FONT = ('Consolas', 7)
 
-# Plate layers, outermost first: the fill reaches the antialiased edge so the
-# soft boundary blends with the plate itself, the subtle border sits a pixel
-# inside it, and the fill returns for everything the border did not cover. The
-# colour-key surround is whatever no layer painted. BOX is the filter for an
-# exact _PLATE_SCALE fold down: it averages each _PLATE_SCALE squared block and
-# nothing else, so the boundary becomes blends that stay inside the range of the
-# colours they are made of. LANCZOS rings on this edge instead, because its
-# kernel overshoots past a high contrast boundary and pulls the fill a fraction
-# of a percent towards the colour key.
+# The plate's layers, outermost first: the glow is the soft outer step, the
+# surface is the fill, and the border is the one hard line left, a pixel inside
+# the rim. Every colour here is rebound by `set_palette`; the names are kept as
+# module constants because `tools/make_images.py` reads them straight off the
+# module so a colour change in the app reaches the README images.
+_CHIP_SURFACE = theme.DARK.chip_surface
+_CHIP_BORDER = theme.DARK.chip_border
+_CHIP_GLOW = theme.DARK.chip_glow
+_BAR_LOW = theme.DARK.chip_bar_low
+_BAR_MID = theme.DARK.chip_bar_mid
+_BAR_HIGH = theme.DARK.chip_bar_high
+_CLOCK = theme.DARK.chip_clock
+# The clock's size, in design pixels like everything else in the chip. Public
+# because `tools/make_images.py` draws the same glyph into the README images: a
+# size written in two places is a size that will be right in one of them. The
+# chip's own clock takes it through `theme.mono`, which is what turns design
+# pixels into the point size Tk wants.
+CLOCK_SIZE = 8
+
+# Plate layers, outermost first: the glow reaches the antialiased edge so the
+# soft boundary blends with the plate itself, and the fill returns for everything
+# the border did not cover. BOX is the filter for an exact _PLATE_SCALE fold
+# down: it averages each _PLATE_SCALE squared block and nothing else, so the
+# boundary becomes blends that stay inside the range of the colours they are made
+# of. LANCZOS rings on this edge instead, because its kernel overshoots past a
+# high contrast boundary and pulls the fill a fraction of a percent towards the
+# colour key.
 _PLATE_SCALE = 4
 _PLATE_RESAMPLE = Image.Resampling.BOX
-_PLATE_LAYERS = ((0, _BACKGROUND), (1, _BORDER), (2, _BACKGROUND))
+_PLATE_LAYERS = ((0, _CHIP_GLOW), (1, _CHIP_BORDER), (2, _CHIP_SURFACE))
+
+_palette_name = theme.DEFAULT_THEME
+
+
+def set_palette(name: str = theme.DEFAULT_THEME) -> None:
+    """Re-point the chip's colour constants at a theme.
+
+    They are module constants rather than instance attributes because
+    `tools/make_images.py` reads them off the module to draw the README images,
+    and because `build_plate()` has to be callable with no arguments at all from
+    a script that never builds the application. A live chip calls `repaint()`
+    afterwards, so this changes what the next plate is painted from.
+    """
+    global _palette_name, _CHIP_SURFACE, _CHIP_BORDER, _CHIP_GLOW
+    global _BAR_LOW, _BAR_MID, _BAR_HIGH, _CLOCK, _PLATE_LAYERS
+    colours = theme.palette(name)
+    _palette_name = colours.name
+    _CHIP_SURFACE = colours.chip_surface
+    _CHIP_BORDER = colours.chip_border
+    _CHIP_GLOW = colours.chip_glow
+    _BAR_LOW = colours.chip_bar_low
+    _BAR_MID = colours.chip_bar_mid
+    _BAR_HIGH = colours.chip_bar_high
+    _CLOCK = colours.chip_clock
+    _PLATE_LAYERS = ((0, _CHIP_GLOW), (1, _CHIP_BORDER), (2, _CHIP_SURFACE))
+
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
@@ -145,11 +198,6 @@ class _Rect(ctypes.Structure):
         ("left", wt.LONG), ("top", wt.LONG),
         ("right", wt.LONG), ("bottom", wt.LONG),
     ]
-
-
-def _rgb(colour: str) -> tuple[int, int, int]:
-    """Turn one of the hex colours above into a Pillow triple."""
-    return int(colour[1:3], 16), int(colour[3:5], 16), int(colour[5:7], 16)
 
 
 def build_plate() -> Image.Image:
@@ -224,14 +272,18 @@ class RecordingOverlay:
     """
 
     def __init__(
-        self, master: tk.Misc, next_level: Callable[[], float | None]
+        self, master: tk.Misc, next_level: Callable[[], float | None],
+        palette: theme.Palette | None = None,
     ) -> None:
         self._master = master
         self._next_level = next_level
+        if palette is not None:
+            set_palette(palette.name)
         self._window: tk.Toplevel | None = None
         self._canvas: tk.Canvas | None = None
         self._plate: Image.Image | None = None
         self._photo: ImageTk.PhotoImage | None = None
+        self._plate_item: int | None = None
         self._bars: list[list[int]] = []
         self._heights = [float(BAR_IDLE)] * BARS
         self._energy = 0.0
@@ -288,12 +340,32 @@ class RecordingOverlay:
             except tk.TclError:
                 log.debug("overlay window is gone", exc_info=True)
 
+    def repaint(self) -> None:
+        """Re-lay the plate and the bars in the current theme's colours.
+
+        Called after `set_palette`, so a theme change reaches a chip that is
+        already on screen: the window is kept, because keeping it is what stops a
+        recording from being interrupted by a repaint.
+        """
+        canvas = self._canvas
+        if canvas is None:
+            return
+        try:
+            self._put_plate(self._window, canvas)
+            self._paint_bars(canvas)
+            if self._clock is not None:
+                canvas.itemconfigure(self._clock, fill=_CLOCK)
+        except tk.TclError:
+            log.debug("overlay canvas is gone", exc_info=True)
+            self._forget()
+
     def _forget(self) -> None:
         """Drop references to a window the platform has already closed."""
         self._window = None
         self._canvas = None
         self._plate = None
         self._photo = None
+        self._plate_item = None
         self._bars = []
         self._clock = None
 
@@ -315,7 +387,8 @@ class RecordingOverlay:
         self._put_plate(window, canvas)
         self._draw_bars(canvas)
         self._clock = canvas.create_text(
-            WIDTH // 2, CLOCK_Y, text="0:00", fill=_CLOCK, font=_CLOCK_FONT
+            WIDTH // 2, CLOCK_Y, text="0:00", fill=_CLOCK,
+            font=theme.mono(CLOCK_SIZE),
         )
         # Tk rewrites the extended style every time the window is mapped, so
         # the no-activate bit has to be put back after each map, not once here.
@@ -364,7 +437,10 @@ class RecordingOverlay:
         # no reference of its own and would otherwise draw nothing.
         self._plate = plate
         self._photo = photo
-        canvas.create_image(0, 0, anchor="nw", image=photo)
+        if self._plate_item is None:
+            self._plate_item = canvas.create_image(0, 0, anchor="nw", image=photo)
+        else:
+            canvas.itemconfigure(self._plate_item, image=photo)
 
     def _draw_square_plate(self, canvas: tk.Canvas) -> None:
         """Lay the plate on from canvas rectangles, for when Pillow cannot.
@@ -408,6 +484,13 @@ class RecordingOverlay:
                     left, BAR_MID, right, BAR_MID, fill=_BAR_HIGH, outline="",
                 ),
             ])
+
+    def _paint_bars(self, canvas: tk.Canvas) -> None:
+        """Give every existing bar the current theme's ramp, in place."""
+        ramp = (_BAR_LOW, _BAR_MID, _BAR_MID, _BAR_HIGH, _BAR_HIGH)
+        for bar in self._bars:
+            for item, colour in zip(bar, ramp):
+                canvas.itemconfigure(item, fill=colour)
 
     def _on_map(self, event=None) -> None:
         """Keep the chip out of the focus, every time it comes back on screen."""

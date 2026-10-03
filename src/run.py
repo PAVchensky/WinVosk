@@ -14,7 +14,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from winvosk import (autostart, config, corrector, diary, hotkey, keystrokes,
-                      settings, text, vocabulary)
+                      settings, text, theme, vocabulary)
 from winvosk.panel import Panel
 from winvosk.recognizer import DictationEngine, input_device
 from winvosk.tray import TrayIcon
@@ -92,6 +92,7 @@ class App:
             correct_words=settings.correct_words(),
             toggle=settings.toggle_recording(),
             language=settings.language(),
+            theme_name=settings.theme_name(),
         )
         self._hotkeys: tuple[str, ...] = tuple(config.HOTKEYS)
         self._tray = TrayIcon(
@@ -100,6 +101,7 @@ class App:
             is_recording=lambda: self._recording,
             hotkey_label=self._hotkey_label,
             is_toggle=settings.toggle_recording,
+            palette=theme.palette(settings.theme_name()),
         )
         self._hotkey: hotkey.HotkeyListener | None = None
         self._words: list[str] = vocabulary.own_words(config.PHRASES_FILE)
@@ -375,6 +377,8 @@ class App:
             self._set_language(str(value))
         elif name == "set_autostart":
             self._set_autostart(bool(value))
+        elif name == "set_theme":
+            self._set_theme(str(value))
         elif name == "copy":
             self._copy(self._session.total or self._panel.text)
         elif name == "clear":
@@ -580,6 +584,30 @@ class App:
         log.warning(message)
         self._panel.set_option_hint(message, error=True)
         self._tray.notify(message, text.t("title_error"))
+
+    def _set_theme(self, name: str) -> None:
+        """Persist the interface theme and put it in effect everywhere.
+
+        Same shape as every other switch: the app owns the value, a failed write
+        puts the switch back to what is really in effect, and the change only
+        happens after the write — a theme that was never stored would be a lie on
+        the next start. The tray icon is redrawn too, so the notification area
+        does not keep an icon from the palette the panel has just left.
+        """
+        if not settings.store_theme_name(name):
+            self._panel.set_theme(settings.theme_name())
+            self._option_failed(text.t("theme_failed"))
+            return
+        self._panel.set_theme(name)
+        if self._panel.theme_name != name:
+            self._panel.set_theme(settings.theme_name())
+            return
+        log.info("interface theme is now %s", name)
+        self._tray.set_theme(name)
+        self._tray.refresh()
+        self._panel.set_option_hint(
+            text.t("theme_on" if name == theme.DARK.name else "theme_off")
+        )
 
     def quit(self) -> None:
         if self._closing:
@@ -837,6 +865,10 @@ def _diagnose() -> int:
         f"live typing : {'on' if settings.live_typing() else 'off'}",
         f"clipboard   : {'on' if settings.copy_to_clipboard() else 'off'}",
         f"language    : {settings.language()} ({text.language()})",
+        # The stored theme and the one the process is actually painting in, which
+        # are the same thing unless something put a bad value in the file: a
+        # mismatch here is why a panel came up in a colour nothing asked for.
+        f"theme       : {settings.theme_name()} ({theme.palette(settings.theme_name()).name})",
         f"corrections : {'on' if settings.correct_words() else 'off'}, "
         f"{len(vocabulary.own_words(config.PHRASES_FILE))} own word(s) "
         f"from {config.PHRASES_FILE.name}",

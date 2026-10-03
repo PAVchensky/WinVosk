@@ -51,6 +51,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "button_copy": {"ru": "Копировать", "en": "Copy"},
     "button_clear": {"ru": "Очистить", "en": "Clear"},
     "button_reset": {"ru": "Сбросить", "en": "Reset"},
+    "transcript_placeholder": {
+        "ru": "Здесь появится распознанный текст",
+        "en": "Recognised text appears here",
+    },
     "footer": {
         "ru": "Удерживайте {label} и говорите   ·   закрыть окно = свернуть в трей",
         "en": "Hold {label} and speak   ·   closing the window hides it to the tray",
@@ -81,6 +85,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "group_insertion": {"ru": "Куда попадает текст", "en": "Where the text goes"},
     "group_startup": {"ru": "Запуск", "en": "Startup"},
     "group_language": {"ru": "Язык", "en": "Language"},
+    "group_appearance": {"ru": "Оформление", "en": "Appearance"},
     "group_words": {"ru": "Свои слова", "en": "Your own words"},
     "option_typing": {
         "ru": "Печатать в активное окно",
@@ -103,6 +108,15 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Add words to phrases.txt, one per line",
     },
     "option_autostart": {"ru": "Автозапуск с Windows", "en": "Start with Windows"},
+    "option_theme": {"ru": "Тёмная тема", "en": "Dark theme"},
+    "theme_hint": {
+        "ru": "Тёмная — для ночной работы, светлая — для дневной. Настройка "
+              "сохраняется рядом с программой",
+        "en": "Dark for the night, light for the day. The setting is kept next "
+              "to the program",
+    },
+    "theme_on": {"ru": "Тёмная тема включена", "en": "Dark theme is on"},
+    "theme_off": {"ru": "Включена светлая тема", "en": "Light theme is on"},
     "option_toggle": {"ru": "Переключать запись", "en": "Toggle recording"},
     "toggle_hint": {
         "ru": "Нажали — пишет, нажали ещё раз — стоп. Страховка: «Стоп» на панели, "
@@ -170,6 +184,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "save_failed": {
         "ru": "Не удалось сохранить настройку",
         "en": "Could not save the setting",
+    },
+    "theme_failed": {
+        "ru": "Не удалось сохранить тему",
+        "en": "Could not save the theme",
     },
     "autostart_failed": {
         "ru": "Не удалось изменить автозапуск",

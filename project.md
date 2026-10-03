@@ -42,9 +42,11 @@ recognizer.py      vosk model + microphone stream + worker thread, and the sub-f
 hotkey.py          global push-to-talk hotkey via WH_KEYBOARD_LL (ctypes), plus its capture mode
 keystrokes.py      text typed with KEYEVENTF_UNICODE
 vocabulary.py      phrases.txt loader and --vocab-check
+theme.py           design tokens and the Pillow painter behind them: the palettes, the spacing and type scales, rounded corners, soft shadows, DWM window dressing, DPI awareness
+widgets.py         the panel's own widgets, since Tk has neither rounded corners nor soft shadows nor hover: cards, buttons, choices, switch, field, tabs, scrollbar, scroller, transcript
 panel.py           always-on-top Tk panel, two tabs; built unmapped and kept in the tray
 overlay.py         focusless chip: eleven bars over a clock, antialiased Pillow plate, centred on the work area
-settings.py        settings.json: hotkey list and on/off switches, atomic write, defaults on anything unusable
+settings.py        settings.json: hotkey list, interface language, interface theme and on/off switches, atomic write, defaults on anything unusable
 corrector.py       own-word correction on finished utterances, difflib, cutoff in one constant, plus the glue that repairs a word the model split across a space
 text.py            every user visible string, ru and en, plus the language switch
 tray.py            pystray icon and menu
@@ -52,7 +54,7 @@ autostart.py       HKCU\...\Run entry
 diary.py           dated history under logs\
 file_transcribe.py fallback: media file to text, plus --self-test
 run.py             entry point
-tools\             verification probes (hold, typing, hook, settings, correct, lang, cleanup), build_exe.py, which prunes _internal\ after PyInstaller, package_release.py, which stages the release archive, and make_images.py, which redraws every README screenshot from the live widgets
+tools\             verification probes (hold, typing, hook, settings, correct, lang, readme, cleanup), build_exe.py, which prunes _internal\ after PyInstaller, package_release.py, which stages the release archive, and make_images.py, which redraws every README screenshot from the live widgets
 WinVosk.spec       PyInstaller build definition: one folder, no console
 requirements.txt   the five runtime pins, also the ones WinVosk.bat prints
 requirements-dev.txt  pyinstaller, needed only to build
@@ -100,6 +102,7 @@ Run everything from the project root with the venv interpreter.
 .\.venv\Scripts\python.exe .\tools\typing_probe.py
 .\.venv\Scripts\python.exe .\tools\settings_probe.py   # headless: no GUI, mic or model
 .\.venv\Scripts\python.exe .\tools\correct_probe.py    # headless: correction rules and cost
+.\.venv\Scripts\python.exe .\tools\readme_probe.py     # headless: the GitHub-facing pages
 .\.venv\Scripts\python.exe .\tools\build_exe.py        # build dist\WinVosk\
 ```
 
@@ -117,13 +120,18 @@ line in `app.log` means the change is not finished. Checks 4 and 5 need a human
 at the keyboard and cannot be automated — an agent session has no foreground
 window at all, so `SendInput` injects nothing and the probes cannot pass there.
 
-`tools\settings_probe.py`, `tools\correct_probe.py` and `tools\lang_probe.py` are headless checks that are not part of that bar: they
+`tools\settings_probe.py`, `tools\correct_probe.py`, `tools\lang_probe.py` and
+`tools\readme_probe.py` are headless checks that are not part of that bar: they
 need no GUI, microphone, model load or real hook, print `VERDICT: PASS`/`FAIL`,
 and cover the key-name mapping and the spec round trip, the capture rules, the
 `settings.json` fallbacks including the switches and a byte order mark, that
 leaving the capture hands the keyboard back, the own-word correction rules and
-their cost, and the message table — including that no string literal containing
-Cyrillic exists outside `winvosk\text.py`.
+their cost, the message table — including that no string literal containing
+Cyrillic exists outside `winvosk\text.py` — and the three GitHub-facing pages:
+dead anchors, Cyrillic that escaped into English prose, control names that no
+longer match `text.py`, a `settings.json` example that names the wrong shipped
+language, the corrector cutoff stated backwards, and heading parity between the
+two guides.
 
 ## Invariants
 
@@ -176,10 +184,12 @@ Detail and rationale in `AGENTS.md` § Invariants worth keeping. In short:
   and carries no Cyrillic outside a fenced block, a table row of input/output
   pairs, or an inline code span quoting what a tool printed
 - `README.ru.md` — the same guide in Russian; edited as one document with
-  `README.md`, same sections in the same order and the same 39 headings, each in
-  its own language. A GitHub anchor comes from the heading text, so the anchors
-  are per-file and differ between the two: `#установка-и-запуск` here,
-  `#install-and-run` there. Keep them in step by section number, not by string
+  `README.md`, same sections in the same order and the same headings at the same
+  levels, each in its own language. A GitHub anchor comes from the heading text, so
+  the anchors are per-file and differ between the two: `#установка-и-запуск` here,
+  `#install-and-run` there. Keep them in step by section number, not by string.
+  `tools\readme_probe.py` is what notices when one file gains a heading and the
+  other does not
 - `docs\HOWTO.md` — English throughout, Cyrillic only as a quoted control name or
   a quoted token; a Russian heading there is a defect
 - `docs\instructions\setup.md` — the install procedure as an ordered sequence,
