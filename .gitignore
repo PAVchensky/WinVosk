@@ -21,12 +21,21 @@ backup/
 settings.json
 settings.json.tmp
 
+# The user's own word list. phrases.example.txt is the shipped template and the
+# list itself is personal: tools\package_release.py refuses to ship it.
+phrases.txt
+
 # Local working notes: this machine's delivery process, not the product.
+# docs\instructions\setup.md is the exception and is tracked - it is the install
+# procedure, and llms.txt points an agent at it.
 STAGES.md
 stage_report.md
 history.md
 MEMORY.MD
-docs/instructions/
+docs/instructions/build.md
+docs/instructions/debug.md
+docs/instructions/plan.md
+docs/instructions/review.md
 docs/stages/
 docs/reports/
 

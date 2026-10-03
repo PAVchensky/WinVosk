@@ -1,0 +1,79 @@
+WinVosk — offline Russian dictation for Windows
+Copyright 2026 PAV
+
+This product is licensed under the Apache License, Version 2.0; see LICENSE.
+
+--------------------------------------------------------------------------
+What this distribution contains (Apache-2.0 section 4b)
+--------------------------------------------------------------------------
+
+This work is original. Every file in this repository was written for this
+project, and no source file of vosk-api is vendored, patched or copied into it.
+The modified files, in the sense of section 4(b) of the License, are the whole
+of this repository, because the upstream project is used as an installed
+package rather than as source.
+
+The Python package `vosk` is not part of this repository. It is installed from
+PyPI and is the reference implementation of the speech recognition toolkit by
+Alpha Cephei Inc, published from https://github.com/alphacep/vosk-api. The
+binary build in this repository ships that package's native libraries inside the
+folder next to the exe, and their notices are reproduced below as sections 4(c)
+and 4(d) require.
+
+--------------------------------------------------------------------------
+Third party notices (Apache-2.0 section 4d)
+--------------------------------------------------------------------------
+
+Vosk Speech Recognition Toolkit
+  Alpha Cephei Inc, https://github.com/alphacep/vosk-api
+  Licensed under the Apache License, Version 2.0. Unmodified; used as
+  published, through the `vosk` PyPI package.
+
+Kaldi ASR
+  https://github.com/kaldi-asr/kaldi
+  Licensed under the Apache License, Version 2.0. Statically linked into
+  libvosk.dll by the upstream build.
+
+OpenFst
+  https://www.openfst.org/
+  Licensed under the Apache License, Version 2.0. Statically linked into
+  libvosk.dll by the upstream build.
+
+Unicode CLDR data
+  https://cldr.unicode.org/
+  Licensed under the Unicode License v3 (SPDX: Unicode-3.0). Statically linked
+  into libvosk.dll by the upstream build, for the text normalisation and
+  punctuation models.
+
+PortAudio
+  https://github.com/PortAudio/portaudio
+  Licensed under the MIT license. Shipped as `_sounddevice_data/portaudio.dll`
+  inside the binary build.
+
+GNU C runtime (libstdc++-6.dll, libgcc_s_seh-1.dll, libwinpthread-1.dll)
+  Part of GCC, https://gcc.gnu.org/. The GNU General Public License version 3
+  with the GCC Runtime Library Exception, which expressly permits distribution
+  of the runtime with independent works. Shipped inside the binary build.
+
+PyInstaller bootloader
+  https://pyinstaller.org/, licensed under the GNU General Public License
+  version 2 with a special exception that allows bundling the bootloader with
+  non-free and commercial programs. Shipped inside the binary build.
+
+CPython and Tcl/Tk
+  https://www.python.org/, licensed under the Python Software Foundation
+  License; Tcl/Tk under the BSD style Tcl/Tk terms. Shipped inside the binary
+  build as the interpreter and the Tk toolkit the panel is drawn with.
+
+Pillow, pystray, sounddevice, pyperclip
+  Installed Python packages, used as published. Pillow is MIT-CMU, pystray is
+  LGPL-3.0, sounddevice is MIT, pyperclip is BSD. Their license texts travel in
+  `licenses/`.
+
+Speech model vosk-model-small-ru-0.22
+  Published by Alpha Cephei Inc at https://alphacephei.com/vosk/models and
+  listed there under the Apache License, Version 2.0. Redistributed unmodified
+  in the binary build; no license file is included inside the model archive
+  itself.
+
+The full text of every license mentioned above is in `licenses/`.

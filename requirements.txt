@@ -1,0 +1,8 @@
+# Runtime pins. These five are the versions this app is verified against, and
+# the same five that WinVosk.bat prints when the virtual environment is missing.
+# vosk 0.3.45 publishes a cp314 win_amd64 wheel, so nothing has to be built.
+vosk==0.3.45
+sounddevice==0.5.6
+pystray==0.19.5
+Pillow==12.3.0
+pyperclip==1.11.0

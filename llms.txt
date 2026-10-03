@@ -1,0 +1,60 @@
+# WinVosk
+
+> Offline dictation and voice-to-text for Windows: hold a hotkey, speak, and the
+> recognised text is typed at the caret of the window you were typing in.
+> Recognition runs locally with Vosk and a speech model; nothing leaves the
+> machine. The language is the model's choice — the publisher lists models for
+> two dozen languages, and any model dropped into `models\` is picked up
+> automatically. The model this repository is verified with is the small Russian
+> one.
+
+WinVosk is an independent project, not affiliated with or endorsed by Alpha
+Cephei or the Vosk project. Vosk is a trademark of its owner, used here to name
+the underlying toolkit.
+
+## For agents
+
+If you are setting this up, do not guess. Read the file the task names, use the
+pinned versions, and verify with the project's own commands.
+
+- [README.md](README.md): what it is, install, model, own words, verification.
+- [docs/instructions/setup.md](docs/instructions/setup.md): the install
+  procedure as an explicit sequence, with the traps.
+- [AGENTS.md](AGENTS.md): architecture, the verification bar, and the invariants
+  with the reason behind each one. Read before changing code.
+- [project.md](project.md): the project context in one page — stack, layout,
+  commands.
+
+### Where things come from
+
+- Python packages: `requirements.txt`, exactly five pins. Do not substitute
+  versions; `vosk` 0.3.45 is the binding that ships a `cp314` `win_amd64` wheel.
+- Speech models: <https://alphacephei.com/vosk/models> — the single source of
+  truth for what exists, in which languages, how big and under what license. The
+  official archive URL and a Hugging Face mirror are given in README.md; both
+  serve the same bytes. Any model in `models\` works; `vosk-model-small-ru-0.22`
+  is the verified default.
+- Everything else in the repository: original work under Apache-2.0.
+
+### Verify, do not assume
+
+```powershell
+.\.venv\Scripts\python.exe -m compileall -q .\src
+.\.venv\Scripts\python.exe .\src\run.py --diagnose
+.\.venv\Scripts\python.exe .\src\winvosk\file_transcribe.py --self-test
+.\.venv\Scripts\python.exe .\tools\correct_probe.py
+.\.venv\Scripts\python.exe .\tools\lang_probe.py
+```
+
+`--diagnose` must print the expected `base dir` and a real `records from` line;
+the probes must print `VERDICT: PASS`. `AGENTS.md` lists what each check proves.
+
+## For users
+
+- [docs/HOWTO.md](docs/HOWTO.md): the complete guide — usage, the panel,
+  settings, the vocabulary, caveats.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE), [NOTICE](NOTICE),
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [licenses/](licenses/).

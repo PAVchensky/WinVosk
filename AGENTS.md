@@ -9,6 +9,13 @@ needs no edit: `config.BASE_DIR` is derived from `__file__`, `WinVosk.bat`
 from `%~dp0`, the `tools\` probes from their own `__file__`, and every command
 below is relative. Run them from the project root.
 
+It is the only checkout, and `origin` is `PAVchensky/WinVosk` on it.
+`D:\AI\WinVosk` is an older tree on this machine, kept only as a staging area for
+release assets: its `src\` stopped on 2026-10-02, so it has none of the toggle
+mode, `--check-bundle` or `README.ru.md`, and its history is unrelated. Never
+push from it, and never copy its `WinVosk.spec` over this one — it collects
+`vosk` with `collect_all`.
+
 ## Release
 
 `VERSION` in `src\winvosk\config.py` is the single source of the release number,
@@ -23,9 +30,18 @@ a second literal there already disagreed with this one, in a different format.
 gets `1.0.1` only for a fix that changes no behaviour a user can observe.
 
 A release is: `VERSION` bumped, all six checks in § Verification green, the
-bundle rebuilt with `tools\build_exe.py`, and `README.md` checked for anything
-the change made untrue. There is no separate changelog file; `history.md` and
-`STAGES.md` are append-only records and are not the release notes.
+bundle rebuilt with `tools\build_exe.py`, the archive staged with
+`tools\package_release.py`, and `README.md` checked for anything the change made
+untrue. There is no separate changelog file; `history.md` and `STAGES.md` are
+append-only records and are not the release notes.
+
+`package_release.py` is what makes the archive the README tells a user to
+download. It takes `dist\WinVosk\` and removes what is the user's — `phrases.txt`,
+`settings.json`, `logs\` — adds `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`,
+`licenses\` and `phrases.example.txt`, then prints the SHA-256. It refuses to
+finish if anything personal survived, so never hand it a `dist\` you built from
+a folder you meant to keep private. `phrases.txt` itself is not in the
+repository at all: the shipped template is `phrases.example.txt`.
 
 ## Documentation
 
@@ -44,6 +60,10 @@ them drift apart.
   one, change the other in the same commit, or one of them is a lie.
 - **`docs\HOWTO.md`** — the reference, in English: internals, layout, why each
   design decision was taken, the verification helpers, the caveats.
+- **`llms.txt`** and **`docs\instructions\setup.md`** — the short map an agent
+  reads first, and the install procedure behind it as an ordered sequence with
+  the traps. Both point at `README.md`, this file and `project.md` rather than
+  repeating them.
 
 `AGENTS.md` is agent-facing and `project.md` is project context; neither is a
 user guide. When a change makes a statement in any of them untrue, fix the

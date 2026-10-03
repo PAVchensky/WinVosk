@@ -78,8 +78,8 @@ WinVosk\
 ├── WinVosk.exe          the application
 ├── _internal\           Python, Tcl/Tk, Vosk + Kaldi, PortAudio, Pillow
 ├── models\              the speech model
+├── phrases.example.txt  copy it to phrases.txt and fill it in
 ├── logs\                app.log and the dated dictation history
-├── phrases.txt          your own word list
 └── settings.json        written by the app on the first change
 ```
 
@@ -139,8 +139,10 @@ Two shipped combinations, and both are push to talk:
   the modifiers down and tap the arrow for each sentence.
 
 While a recording runs, a small dark chip sits in the middle of the screen with
-nine bars and an elapsed timer. It never takes the focus, so the words still go
+eleven bars and an elapsed timer. It never takes the focus, so the words still go
 into your document and not into the chip.
+
+<img src="docs/img/chip.gif" width="348" alt="The recording chip: eleven thin pink bars over an elapsed clock, animating while a recording is running">
 
 **You can change the combination** in **Настройки**; see
 [Settings](#settings-every-one-of-them).
@@ -178,6 +180,9 @@ The panel has two tabs.
 **Диктовка** — the recognised text as it arrives, with the model name in the
 corner, the hold button, **Стоп**, **Копировать** and **Очистить**, and the hotkey
 in the footer. This tab does nothing configurable; it is the transcript.
+
+<img src="docs/img/panel-ru.png" width="46%" alt="WinVosk panel in Russian, showing a finished dictation: перенести файлы в дропбокс и отправить отчёт">
+<img src="docs/img/panel-en.png" width="46%" alt="The same WinVosk window in English, after switching the interface language in place">
 
 **Настройки** — everything you can change. See below.
 
@@ -364,6 +369,10 @@ line, no punctuation, `#` starts a comment:
 дропбокс
 проверка связи
 ```
+
+The file is yours, so it is not in the repository and not in the release archive.
+What ships instead is `phrases.example.txt`, the same commented template;
+copying it to `phrases.txt` is the first thing to do.
 
 It does two jobs, and they are worth separating because they answer different
 questions.
@@ -649,7 +658,7 @@ Notes:
 | `models\<model>\` | the speech model | yes — put another one back |
 | `logs\app.log` | diagnostics, rotated at 2 MB × 3 | yes |
 | `logs\YYYY-MM-DD.txt` | the dictation diary, one file per day | yes, it is only a copy |
-| `phrases.txt` | your own word list | yes — the app ships a commented template |
+| `phrases.txt` | your own word list | yes — copy `phrases.example.txt` over it |
 | `settings.json` | your settings | yes — costs the defaults only |
 
 There are no absolute paths anywhere in the tree, so the folder can live

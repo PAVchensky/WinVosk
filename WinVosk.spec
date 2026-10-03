@@ -34,6 +34,13 @@ for package in ("vosk", "sounddevice"):
     binaries += collect_dynamic_libs(package)
     datas += collect_data_files(package, include_py_files=False)
 
+# The bundle ships Apache-2.0 code, the GCC runtime and the PyInstaller
+# bootloader, so their texts travel with it rather than sitting in the
+# repository. `tools\package_release.py` copies the same set into the archive.
+for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
+    datas.append((str(ROOT / name), "."))
+datas.append((str(ROOT / "licenses"), "licenses"))
+
 # `vosk.vosk_cffi` builds its bindings through cffi at import time, so it has to
 # be named: nothing imports it by a literal `import`.
 hiddenimports = ["vosk.vosk_cffi"]

@@ -52,8 +52,15 @@ autostart.py       HKCU\...\Run entry
 diary.py           dated history under logs\
 file_transcribe.py fallback: media file to text, plus --self-test
 run.py             entry point
-tools\             verification probes (hold, typing, hook, settings, correct, lang, cleanup) and build_exe.py, which prunes _internal\ after PyInstaller
+tools\             verification probes (hold, typing, hook, settings, correct, lang, cleanup), build_exe.py, which prunes _internal\ after PyInstaller, and package_release.py, which stages the release archive
 WinVosk.spec       PyInstaller build definition: one folder, no console
+requirements.txt   the five runtime pins, also the ones WinVosk.bat prints
+requirements-dev.txt  pyinstaller, needed only to build
+phrases.example.txt   the shipped word-list template; phrases.txt itself is personal
+NOTICE             what is whose, for Apache-2.0 sections 4(b) and 4(d)
+THIRD_PARTY_NOTICES.md  the same, per dependency
+licenses\          the license texts themselves, one file per dependency
+llms.txt           the short map an agent reads first
 ```
 
 No absolute path exists in the source tree: `config.BASE_DIR` comes from
@@ -62,6 +69,13 @@ No absolute path exists in the source tree: `config.BASE_DIR` comes from
 `D:\AI\Vosk`. A frozen build is the one exception: there `BASE_DIR` is the
 folder the exe is in (`sys.frozen`), so `models\`, `logs\`, `settings.json` and
 `phrases.txt` are read and written next to it.
+
+`D:\AI\Vosk` is the only checkout: it is what `origin` tracks and what gets
+pushed. `D:\AI\WinVosk` is an older tree kept on this machine as a staging area
+for release assets — its `src\` stopped on 2026-10-02 and has none of the toggle
+mode, `--check-bundle` or `README.ru.md`. Nothing is pushed from it, and its
+`WinVosk.spec` must never be copied over this one: it collects `vosk` with
+`collect_all`, which drags the whole TLS stack into the bundle.
 
 `settings.json` at the checkout root is the one file that is machine state
 rather than part of the checkout: gitignored, atomically written, and read from
@@ -159,6 +173,9 @@ Detail and rationale in `AGENTS.md` § Invariants worth keeping. In short:
 - `README.ru.md` — the same guide in Russian; edited as one document with
   `README.md`, same headings in the same order, because a GitHub anchor comes
   from the heading text
+- `docs\instructions\setup.md` — the install procedure as an ordered sequence,
+  with the traps, in the repository and pointed at by `llms.txt`
+- `llms.txt` — the short map an agent reads first
 - `AGENTS.md` — authoritative agent-facing notes, verification bar, invariants
 - `docs\HOWTO.md` — the reference: internals, layout, design rationale, probes
 - `project.md` — this file: project context
@@ -167,8 +184,11 @@ Detail and rationale in `AGENTS.md` § Invariants worth keeping. In short:
   (`local_path` `D:/AI/Vosk`), not in this tree
 
 `STAGES.md`, `history.md` and `MEMORY.MD` are stage/history records: append,
-do not rewrite. They are listed in `.gitignore` along with `docs\instructions\`
-and `docs\stages\`, because they record this machine's delivery process rather
+do not rewrite. They are listed in `.gitignore` along with the four
+`docs\instructions\` files that are agent prompts rather than product
+documentation — `build.md`, `plan.md`, `review.md`, `debug.md` — and with
+`docs\stages\`, because they record this machine's delivery process rather
 than the product, so they stay out of the published repository while staying on
-disk here. Before 2026-10-02 this file described an unrelated project
+disk here. `setup.md` is the exception and is tracked. Before 2026-10-02 this
+file described an unrelated project
 (Teleread, Python 3.4, server `mjd`); that text was stale and has been replaced.
