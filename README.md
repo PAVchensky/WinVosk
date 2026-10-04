@@ -30,7 +30,8 @@
 
 ## TL;DR
 
-- **Needs:** Windows x64, a microphone, about 90 MB of disk. Nothing else.
+- **Needs:** Windows x64, a microphone, about 175 MB of disk once the folder is
+  unpacked. Nothing else.
 - **Does not need:** an installer, administrator rights, a Python of your own —
   the release carries its own — or a network connection.
 - **Is:** one folder. `WinVosk.exe`, `_internal\`, `models\`. Nothing is

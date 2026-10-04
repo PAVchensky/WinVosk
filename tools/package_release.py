@@ -57,7 +57,7 @@ README_TEXT = """WinVosk {version} — offline dictation and voice-to-text for W
 4. The language is the model's choice. This archive ships the small Russian
    model; any other model from https://alphacephei.com/vosk/models dropped into
    the models folder is picked up automatically, and the publisher lists models
-   for two dozen languages.
+   for 32 languages.
 
 5. Your own words go in phrases.txt — copy phrases.example.txt and fill it in.
    The file is not shipped, because it is yours.
