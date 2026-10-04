@@ -116,10 +116,18 @@ def activate(target: int) -> bool:
 
 
 def dismiss_foreground_holders(attempts=20):
-    """Close whatever refuses to give the focus up, such as the Search flyout."""
+    """Close whatever refuses to give the focus up, such as the Search flyout.
+
+    Alt is tapped before Escape, and the order is load bearing. Tapping Alt puts
+    the foreground window into menu mode, and the next keystroke of anything is
+    then eaten leaving that mode, so an Escape afterwards is what keeps the first
+    character of the first fragment from disappearing and the probe from
+    blaming the typer for it. Measured: `[Alt, Escape]` types all nine, the
+    reverse order types eight.
+    """
     for attempt in range(attempts):
-        tap(VK_ESCAPE)
         tap(VK_MENU)
+        tap(VK_ESCAPE)
         time.sleep(0.2)
         if activate(hwnd):
             return attempt + 1
