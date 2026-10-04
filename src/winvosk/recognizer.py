@@ -10,6 +10,7 @@ import time
 from array import array
 from collections import deque
 from pathlib import Path
+from typing import NamedTuple
 
 import sounddevice as sd
 import vosk
@@ -71,20 +72,33 @@ def levels_from_block(indata, points: int = LEVEL_POINTS) -> list[float]:
     return levels
 
 
-def input_device(preferred: int | None = None) -> int | None:
-    """The device index to record from, or None to leave it to PortAudio.
+def input_device(preferred: str | None = None) -> int | None:
+    """The index of the device to record from, or None to leave it to PortAudio.
 
-    An explicit `preferred` is never overridden. Otherwise PortAudio's own
-    default is only trusted when it names a device: on this machine
-    `Pa_GetDefaultInputDevice()` answers `paNoDevice`, because MME, DirectSound
-    and WASAPI all report no default input and only WDM-KS names one — so
-    `device=None` raises `Error querying device -1` and the stream never opens.
-    The host API default is used, and the first device that can record is the
-    fallback. Devices come and go with whatever Windows does to the sound
+    `preferred` is a device **name**, not an index, and never an override: a
+    PortAudio index is a position in a list Windows builds per machine, per host
+    API and per boot, so a stored index is a pointer at whatever happens to sit
+    in that slot today. The name is what the user recognises from the settings
+    tab and what they read off the record, so it is what is stored, and a name
+    that no longer resolves falls back to the automatic choice with a warning
+    rather than to some other microphone.
+
+    Otherwise PortAudio's own default is only trusted when it names a device: on
+    this machine `Pa_GetDefaultInputDevice()` answers `paNoDevice`, because MME,
+    DirectSound and WASAPI all report no default input and only WDM-KS names one
+    — so `device=None` raises `Error querying device -1` and the stream never
+    opens. The host API default is used, and the first device that can record is
+    the fallback. Devices come and go with whatever Windows does to the sound
     mapper, so this is asked again on every start rather than cached.
     """
-    if preferred is not None:
-        return preferred
+    if preferred:
+        for device in input_devices():
+            if device.name.casefold() == preferred.casefold():
+                return device.index
+        log.warning(
+            "no input device is named %r any more, falling back to the default",
+            preferred,
+        )
     try:
         for hostapi in sd.query_hostapis():
             device = hostapi["default_input_device"]
@@ -100,6 +114,57 @@ def input_device(preferred: int | None = None) -> int | None:
     return None
 
 
+def device_name(index: int | None) -> str:
+    """What `index` is called, or an empty string when it is nothing."""
+    if index is None:
+        return ""
+    for device in input_devices():
+        if device.index == index:
+            return device.name
+    return str(index)
+
+
+class Device(NamedTuple):
+    """One thing that can be recorded from, as the settings tab shows it.
+
+    `default` marks what PortAudio would pick on its own, so the card can say
+    which of the options is the one already in effect rather than asking the user
+    to know what the sound mapper thinks.
+    """
+
+    index: int
+    name: str
+    hostapi: str
+    default: bool
+
+
+def input_devices() -> list[Device]:
+    """Every device that can record, with the host API each one belongs to.
+
+    Never raises: this is called to fill a list of radio buttons, and a card that
+    cannot be built leaves the user with no way to change the device at all, which
+    is the one thing the card exists for.
+    """
+    try:
+        apis = sd.query_hostapis()
+        listed = sd.query_devices()
+    except Exception:
+        log.warning("could not list the input devices", exc_info=True)
+        return []
+    defaults = {
+        int(api["default_input_device"]) for api in apis
+        if int(api["default_input_device"]) >= 0
+    }
+    found: list[Device] = []
+    for index, device in enumerate(listed):
+        if int(device["max_input_channels"]) <= 0:
+            continue
+        host = int(device["hostapi"])
+        hostapi = str(apis[host]["name"]) if 0 <= host < len(apis) else ""
+        found.append(Device(index, str(device["name"]), hostapi, index in defaults))
+    return found
+
+
 class DictationEngine:
     """Owns the model, the microphone stream and one worker thread.
 
@@ -112,7 +177,7 @@ class DictationEngine:
         self,
         model_path: Path,
         events: queue.Queue,
-        device: int | None = None,
+        device: str | None = None,
         sample_rate: int = 16000,
         block_size: int = 8000,
         show_words: bool = False,
@@ -131,6 +196,7 @@ class DictationEngine:
         self._level_lock = threading.Lock()
         self._model = None
         self._stream = None
+        self._index: int | None = None
         self._thread: threading.Thread | None = None
         self._done = ""
         self._partial = ""
@@ -144,6 +210,33 @@ class DictationEngine:
     def is_ready(self) -> bool:
         """Whether the model is loaded, so a query can be put to it at all."""
         return self._model is not None
+
+    @property
+    def is_listening(self) -> bool:
+        """Whether the microphone is open right now.
+
+        False for the whole of the time between one recording and the next, which
+        is the answer to the question Windows asks the user about the microphone
+        and the reason the answer is yes.
+        """
+        return self._stream is not None
+
+    @property
+    def device_name(self) -> str:
+        """What the engine resolved the device to, empty until it has."""
+        return device_name(self._index)
+
+    def replace_device(self, name: str | None) -> None:
+        """Record from `name` from the next recording on.
+
+        Pushed rather than applied: this is called from the Tk thread and the
+        stream belongs to the worker thread. A recording in flight keeps the
+        device it started with — swapping the microphone out from under a
+        half-heard sentence is worse than the one sentence taking the old one.
+        """
+        self._device = name
+        self._index = input_device(name)
+        log.info("recording device set to %r", name or "the system default")
 
     def next_level(self) -> float | None:
         """Pop one measured level, or None while the buffer is momentarily empty.
@@ -202,25 +295,65 @@ class DictationEngine:
         self._events.put(payload)
 
     def _load(self) -> None:
+        """Load the model and resolve the device. The microphone stays shut.
+
+        The stream is opened per recording, in `_begin`, and closed in `_finish`.
+        An app that sits in the notification area between sentences must not hold
+        the microphone open for the whole of its life: Windows then lists it as
+        using the microphone for as long as it runs, which is exactly what a user
+        sees and cannot explain, and every other program that wants the device is
+        refused it.
+        """
         vosk.SetLogLevel(-1)
         started = time.perf_counter()
         self._model = vosk.Model(str(self._model_path))
-        self._stream = sd.RawInputStream(
-            samplerate=self._sample_rate,
-            blocksize=self._block_size,
-            device=input_device(self._device),
-            dtype="int16",
-            channels=1,
-            callback=self._audio_callback,
-        )
-        self._stream.start()
+        self._index = input_device(self._device)
         log.info(
             "model %s ready in %.2fs, input device %r",
             self._model_path.name,
             time.perf_counter() - started,
-            self._stream.device,
+            device_name(self._index),
         )
-        self._emit(type="ready", model=self._model_path.name, device=self._stream.device)
+        self._emit(type="ready", model=self._model_path.name,
+                   device=device_name(self._index))
+
+    def _open_stream(self) -> str | None:
+        """Open the microphone for one recording.
+
+        Returns None when it opened, and the reason it did not when it did not.
+        Refused devices are ordinary rather than exceptional: a Bluetooth headset
+        that has gone to sleep, a device Windows has renumbered, another program
+        holding the exclusive handle. None of that may take the recognizer thread
+        down, so the failure is handed back to `_begin`, which reports it and
+        carries on to the next recording.
+        """
+        try:
+            stream = sd.RawInputStream(
+                samplerate=self._sample_rate,
+                blocksize=self._block_size,
+                device=input_device(self._device),
+                dtype="int16",
+                channels=1,
+                callback=self._audio_callback,
+            )
+            stream.start()
+        except Exception as exc:
+            log.exception("could not open the input device")
+            self._stream = None
+            return str(exc)
+        self._stream = stream
+        return None
+
+    def _close_stream(self) -> None:
+        """Give the microphone back, so Windows stops listing this app as using it."""
+        stream, self._stream = self._stream, None
+        if stream is None:
+            return
+        try:
+            stream.stop()
+            stream.close()
+        except Exception:
+            log.exception("failed to close the input stream")
 
     def _audio_callback(self, indata, frames, time_info, status) -> None:
         if status:
@@ -248,6 +381,17 @@ class DictationEngine:
         self._done = ""
         self._partial = ""
         self._drain()
+        problem = self._open_stream()
+        if problem is not None:
+            # The panel is told the recording is over rather than left waiting
+            # for words that are never coming, and the reason rides out *after*
+            # that: the state event repaints the status line, so a reason sent
+            # first would be wiped by it a frame later.
+            self._active.clear()
+            self._finish(None)
+            self._emit(type="device_error",
+                       message=text.t("mic_open_failed", error=problem))
+            return None
         recognizer = vosk.KaldiRecognizer(self._model, self._sample_rate)
         if self._show_words:
             recognizer.SetWords(True)
@@ -261,6 +405,10 @@ class DictationEngine:
         tail = ""
         if recognizer is not None:
             tail = json.loads(recognizer.FinalResult()).get("text", "")
+        # Before the words are emitted, not after: the microphone is handed back
+        # as the recording ends, so the app stops claiming it the moment the user
+        # stops talking rather than a frame later.
+        self._close_stream()
         self._partial = ""
         self._emit(
             type="state", recording=False, text=self._done, partial="", tail=tail,
@@ -342,10 +490,5 @@ class DictationEngine:
                         type="partial", text=self._partial, total=self._done,
                     )
         finally:
-            if self._stream is not None:
-                try:
-                    self._stream.stop()
-                    self._stream.close()
-                except Exception:
-                    log.exception("failed to close the input stream")
+            self._close_stream()
             log.info("recognizer thread finished")

@@ -15,6 +15,7 @@ build/
 # Machine state, not part of a checkout.
 logs/
 tmp/
+raw/
 backup/
 *.zip
 *.lnk

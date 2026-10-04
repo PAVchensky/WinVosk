@@ -316,7 +316,10 @@ class Microphone:
         self._stream = sd.RawInputStream(
             samplerate=config.SAMPLE_RATE,
             blocksize=config.BLOCK_SIZE,
-            device=config.MIC_DEVICE,
+            # `config.MIC_DEVICE` is a device *name*, and PortAudio's `device=`
+            # takes an index: it goes through the same resolver the engine uses,
+            # which matches the name and falls back to the automatic choice.
+            device=recognizer.input_device(config.MIC_DEVICE),
             channels=1,
             dtype="int16",
             callback=self._callback,

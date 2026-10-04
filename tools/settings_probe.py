@@ -290,7 +290,7 @@ def case_flags(work: Path, results: list[bool]) -> None:
     settings.SETTINGS_FILE = target
     try:
         def read(payload: str | None, label: str, live: bool, clip: bool,
-                 correct: bool, toggle: bool) -> bool:
+                 correct: bool, toggle: bool, log: bool, history: bool) -> bool:
             if payload is None:
                 target.unlink(missing_ok=True)
             else:
@@ -299,20 +299,26 @@ def case_flags(work: Path, results: list[bool]) -> None:
             got_clip = settings.copy_to_clipboard()
             got_correct = settings.correct_words()
             got_toggle = settings.toggle_recording()
+            got_log = settings.logging_enabled()
+            got_history = settings.history_enabled()
             ok = (got_live == live and got_clip == clip and got_correct == correct
-                  and got_toggle == toggle)
+                  and got_toggle == toggle and got_log == log
+                  and got_history == history)
             print(f"  {label:28s} live={got_live!s:5s} clip={got_clip!s:5s} "
-                  f"correct={got_correct!s:5s} toggle={got_toggle!s:5s} {ok}",
+                  f"correct={got_correct!s:5s} toggle={got_toggle!s:5s} "
+                  f"log={got_log!s:5s} history={got_history!s:5s} {ok}",
                   flush=True)
             return ok
 
         defaults = (config.LIVE_TYPE_DEFAULT, config.CLIPBOARD_DEFAULT,
-                    config.CORRECT_WORDS_DEFAULT, config.TOGGLE_DEFAULT)
+                    config.CORRECT_WORDS_DEFAULT, config.TOGGLE_DEFAULT,
+                    config.LOG_WRITE_DEFAULT, config.HISTORY_WRITE_DEFAULT)
         ok = read(None, "missing file", *defaults)
         ok = ok and read(
             '{"live_typing": false, "copy_to_clipboard": true, '
-            '"correct_words": false, "toggle_recording": true}', "all stored",
-            False, True, False, True)
+            '"correct_words": false, "toggle_recording": true, '
+            '"write_log": false, "write_history": false}', "all stored",
+            False, True, False, True, False, False)
         ok = ok and read('{"live_typing": "yes"}', "a string instead of a bool",
                          *defaults)
         ok = ok and read('{"copy_to_clipboard": 1}', "a number instead of a bool",
@@ -321,6 +327,10 @@ def case_flags(work: Path, results: list[bool]) -> None:
                          *defaults)
         ok = ok and read('{"toggle_recording": "on"}', "a string for the mode too",
                          *defaults)
+        ok = ok and read('{"write_log": "yes"}', "a string for the log switch",
+                         *defaults)
+        ok = ok and read('{"write_history": 0}', "a number for the history",
+                         *defaults)
         results.append(ok)
 
         target.unlink(missing_ok=True)
@@ -328,15 +338,21 @@ def case_flags(work: Path, results: list[bool]) -> None:
         kept = settings.store_copy_to_clipboard(True)
         corrected = settings.store_correct_words(False)
         toggled = settings.store_toggle_recording(True)
+        logged = settings.store_logging_enabled(False)
+        kept_history = settings.store_history_enabled(False)
         print(f"  stored: live_typing={settings.live_typing()} "
               f"copy_to_clipboard={settings.copy_to_clipboard()} "
               f"correct_words={settings.correct_words()} "
-              f"toggle_recording={settings.toggle_recording()}", flush=True)
-        ok = stored and kept and corrected and toggled
+              f"toggle_recording={settings.toggle_recording()} "
+              f"write_log={settings.logging_enabled()} "
+              f"write_history={settings.history_enabled()}", flush=True)
+        ok = stored and kept and corrected and toggled and logged and kept_history
         ok = ok and settings.live_typing() is False
         ok = ok and settings.copy_to_clipboard() is True
         ok = ok and settings.correct_words() is False
         ok = ok and settings.toggle_recording() is True
+        ok = ok and settings.logging_enabled() is False
+        ok = ok and settings.history_enabled() is False
         # A switch must never disturb the hotkey list stored beside it.
         settings.store_hotkeys(["win+shift+f5"])
         settings.store_correct_words(True)
@@ -345,6 +361,144 @@ def case_flags(work: Path, results: list[bool]) -> None:
         results.append(ok and settings.hotkeys() == ["win+shift+f5"])
     finally:
         settings.SETTINGS_FILE = original
+
+
+def case_input_device(work: Path, results: list[bool]) -> None:
+    """The recording device key: a name, or nothing at all.
+
+    Case 6 covers the six switches. This one covers the tenth key, and it is the
+    only key in the file that is allowed to hold null as a value rather than only
+    when it is absent — "the system default" is a choice the user makes and it
+    has to be told apart from a file that has never heard of the setting.
+    """
+    print("\ncase 12: the recording device is a name, or the system default",
+          flush=True)
+    original = settings.SETTINGS_FILE
+    target = work / "settings.json"
+    settings.SETTINGS_FILE = target
+    try:
+        def read(payload: str | None, label: str, wanted: str | None) -> bool:
+            if payload is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.write_text(payload, encoding="utf-8")
+            got = settings.input_device()
+            ok = got == wanted
+            print(f"  {label:34s} -> {got!r:28s} {ok}", flush=True)
+            return ok
+
+        name = "Conexant HD Audio capture (MME)"
+        ok = read(None, "missing file", None)
+        ok = ok and read("{}", "a file without the key", None)
+        ok = ok and read('{"input_device": null}', "explicitly the default", None)
+        ok = ok and read(f'{{"input_device": "{name}"}}', "a stored name", name)
+        # Surrounding space is the one repair worth making: a name pasted out of
+        # the Windows dialog brings its own padding, and it would then match no
+        # device at all.
+        ok = ok and read(f'{{"input_device": "  {name}  "}}', "padded, as pasted",
+                         name)
+        ok = ok and read('{"input_device": 6}', "a number, not a name", None)
+        ok = ok and read('{"input_device": ""}', "an empty string", None)
+        ok = ok and read('{"input_device": ["a"]}', "a list", None)
+        results.append(ok)
+
+        target.unlink(missing_ok=True)
+        stored = settings.store_input_device(name)
+        print(f"  stored a name: {settings.input_device()!r}", flush=True)
+        ok = stored and settings.input_device() == name
+        cleared = settings.store_input_device(None)
+        print(f"  stored the default: {settings.input_device()!r} "
+              f"and the file says {settings.load().get('input_device')!r}",
+              flush=True)
+        # The key stays in the file as null rather than being removed: a null is
+        # an answer, and a file written by a later version is read the same way.
+        ok = ok and cleared and settings.input_device() is None
+        ok = ok and "input_device" in settings.load()
+        refused = settings.store_input_device(7)
+        print(f"  a number is refused: {not refused} "
+              f"and the file still says {settings.input_device()!r}", flush=True)
+        results.append(ok and refused is False)
+    finally:
+        settings.SETTINGS_FILE = original
+
+
+def case_log_verbose(work: Path, results: list[bool]) -> None:
+    """The log switch, proved on the handler rather than on the switch.
+
+    A switch that reads back correctly and changes nothing is the failure this
+    case exists for, so it watches the file: what lands in it with the switch on,
+    what does not with it off, and what a handler this module did not attach
+    keeps doing either way.
+    """
+    print("\ncase 11: the log switch re-levels the file and nothing else",
+          flush=True)
+    from logging.handlers import RotatingFileHandler
+
+    ok = config.file_level(True) == logging.INFO
+    ok = ok and config.file_level(False) == logging.WARNING
+    print(f"  file_level(True)={config.file_level(True)} "
+          f"file_level(False)={config.file_level(False)} {ok}", flush=True)
+
+    target = work / "verbose.log"
+    root = logging.getLogger()
+    kept = root.level
+    stream = logging.StreamHandler()
+    stream.setLevel(logging.INFO)
+    file_handler = RotatingFileHandler(
+        target, maxBytes=config.LOG_MAX_BYTES, backupCount=1, encoding="utf-8"
+    )
+    file_handler.setLevel(config.file_level(True))
+    root.addHandler(stream)
+    root.addHandler(file_handler)
+    root.setLevel(logging.INFO)
+    try:
+        def lines() -> int:
+            """How many lines the file holds, flushed and counted."""
+            for handler in root.handlers:
+                handler.flush()
+            if not target.exists():
+                return 0
+            return len(target.read_text(encoding="utf-8").splitlines())
+
+        marker = logging.getLogger("winvosk.probe")
+        marker.info("with the switch on")
+        wrote_info = lines()
+        print(f"  INFO reached the file with the switch on: "
+              f"{wrote_info > 0} ({wrote_info} line(s))", flush=True)
+        ok = ok and wrote_info > 0
+
+        changed = config.set_log_verbose(False)
+        marker.info("dropped while the switch is off")
+        marker.warning("kept while the switch is off")
+        wrote = lines()
+        body = target.read_text(encoding="utf-8")
+        print(f"  set_log_verbose(False)={changed}, level={logging.getLevelName(file_handler.level)},"
+              f" INFO dropped={'dropped while' not in body}, "
+              f"WARNING kept={'kept while' in body} {wrote}", flush=True)
+        ok = ok and changed and file_handler.level == logging.WARNING
+        ok = ok and "dropped while" not in body and "kept while" in body
+
+        # The root level and another handler are none of this switch's business:
+        # the console flags and this probe keep logging at INFO either way.
+        untouched = root.level == logging.INFO and stream.level == logging.INFO
+        print(f"  root level {logging.getLevelName(root.level)}, "
+              f"another handler {logging.getLevelName(stream.level)} "
+              f"{untouched}", flush=True)
+        ok = ok and untouched
+
+        back = config.set_log_verbose(True)
+        marker.info("written again after switching back on")
+        body = target.read_text(encoding="utf-8")
+        print(f"  set_log_verbose(True)={back}, level={logging.getLevelName(file_handler.level)},"
+              f" INFO back={'written again' in body}", flush=True)
+        ok = ok and back and file_handler.level == logging.INFO
+        ok = ok and "written again" in body
+    finally:
+        root.removeHandler(file_handler)
+        root.removeHandler(stream)
+        file_handler.close()
+        root.setLevel(kept)
+    results.append(ok)
 
 
 def case_toggle_mode(results: list[bool]) -> None:
@@ -610,6 +764,8 @@ def main() -> None:
         case_settings_load(work, results)
         case_settings_save(work, results)
         case_flags(work, results)
+        case_input_device(work, results)
+        case_log_verbose(work, results)
         case_partial_hotkeys(work, results)
     finally:
         settings.SETTINGS_FILE = config.BASE_DIR / "settings.json"

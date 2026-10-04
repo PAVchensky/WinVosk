@@ -150,10 +150,19 @@ def _settle(widget) -> None:
 
 
 def panel_shots() -> list[Path]:
-    """The real panel: dictation and settings, in both interface languages."""
+    """The real panel: dictation, settings and history, in both languages."""
     written = []
     text.set_language("ru")
-    panel = panel_mod.Panel(queue.Queue(), lambda: 0.3, correct_words=True)
+    panel = panel_mod.Panel(
+        queue.Queue(), lambda: 0.3, correct_words=True,
+        # Two of the three kinds of device, so the shot shows the card as a user
+        # with hardware on this machine sees it: the system default marked, and a
+        # second one to choose. Built without them it would say there are no
+        # recording devices, which is a fact about this machine and not about the
+        # panel.
+        devices=(("Digital Audio (S/PDIF)", True),
+                 ("Conexant HD Audio capture", False)),
+    )
     panel.set_hotkey("Win+Ctrl+Right  /  Alt+Win")
     panel.set_text("перенести файлы в дропбокс и отправить отчёт", "")
     panel.set_status(text.t("status_ready"))
@@ -174,6 +183,15 @@ def panel_shots() -> list[Path]:
     shot = capture(hwnd).convert("RGB")
     shot.save(OUT / "panel-settings.png")
     written.append(OUT / "panel-settings.png")
+
+    # The history tab, which is the third page and the only one the two shots
+    # above do not show. Photographed in Russian like the settings tab, because
+    # that is the language both guides lead with.
+    panel._notebook.select(panel_mod.HISTORY_TAB)
+    _settle(panel._root)
+    shot = capture(hwnd).convert("RGB")
+    shot.save(OUT / "panel-history.png")
+    written.append(OUT / "panel-history.png")
 
     # The language switch repaints in place, so the same window is photographed
     # again rather than a second one built: that is the invariant, and the shot

@@ -31,6 +31,11 @@ R7  Every pinned legacy anchor is still pinned, and none of them duplicates the
     written to the old name, so the four English anchors that changed are held in
     place by an `<a id="...">` line above the heading — which is invisible, and
     which nothing would complain about losing.
+R8  Every image a page points at is a file that exists and is not empty. The page
+    renders on GitHub and nowhere else, so a `src` naming a file that was never
+    committed is a broken image on the front page that no other rule here can see:
+    R2 checks anchors and stops at the `#`, and an untracked screenshot referenced
+    by both guides is exactly what slips through. Found that way, not guessed.
 
 Usage:
     .\\.venv\\Scripts\\python.exe .\\tools\\readme_probe.py
@@ -136,6 +141,11 @@ PINNED: dict[Path, tuple[str, ...]] = {
     README_RU: ("если-чтото-сломалось",),
 }
 PIN = re.compile(r'^\s*<a id="([^"]+)"></a>\s*$')
+# `src` of every image tag, in any attribute order and either quote style. The
+# path is repo-root relative, which is how the pages write it, so it is resolved
+# against ROOT rather than against the page's own folder.
+IMAGE_SRC = re.compile(r"""<img\s[^>]*?\bsrc=["']([^"']+)["']""")
+EXTERNAL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//)", re.IGNORECASE)
 
 
 def slug(text_line: str) -> str:
@@ -293,11 +303,32 @@ def main(argv: list[str] | None = None) -> int:
                     f"provides — the pin is noise and will be numbered -1"
                 )
 
+    # R8
+    images = 0
+    for path, lines in pages.items():
+        for number, line in enumerate(lines, 1):
+            for src in IMAGE_SRC.findall(line):
+                if EXTERNAL.match(src):
+                    continue          # a URL, not a file in this repository
+                images += 1
+                target = ROOT / src.replace("/", "\\")
+                if not target.is_file():
+                    failures.append(
+                        f"R8 {path.name}:{number} image is not in the "
+                        f"repository: {src}"
+                    )
+                elif target.stat().st_size == 0:
+                    failures.append(
+                        f"R8 {path.name}:{number} image is empty, which renders "
+                        f"as a broken icon: {src}"
+                    )
+
     print(f"files         : {', '.join(path.name for path in pages)}")
     for path, lines in pages.items():
         pinned = sum(1 for line in lines if PIN.match(line))
         print(f"{path.name:<15}: {len(headings(lines))} headings, "
               f"{pinned} pinned, {len(lines)} lines")
+    print(f"images        : {images} local reference(s), all present")
     print(f"language      : shipped {shipped}")
     print(f"controls      : {len(EXPECTED)} keys, both languages")
     print(f"\nVERDICT: {'PASS' if not failures else f'FAIL ({len(failures)})'}")

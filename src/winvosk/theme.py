@@ -538,6 +538,54 @@ def dress_window(window: tk.Misc, colours: Palette) -> bool:
     return ok
 
 
+# A window that must never be brought into the focus: the recording chip and the
+# toast both appear over whatever the user is typing into, and a window that takes
+# the focus while a fragment is being dictated is a fragment that lands in the
+# wrong place. `WS_EX_NOACTIVATE` is the operating system refusing to activate it,
+# which is stronger than anything the app can do about it afterwards.
+_GWL_EXSTYLE = -20
+_WS_EX_NOACTIVATE = 0x08000000
+_WS_EX_TOOLWINDOW = 0x00000080
+
+
+def forbid_activation(window: tk.Misc | None) -> bool:
+    """Ask Windows for a window that can never be brought into the focus.
+
+    False means there was no frame handle to dress: a window that is not mapped
+    yet, or one whose `wm_frame` is not a handle. That is a fact about the
+    moment, not a fault, so nothing is logged as an error.
+
+    Like `dress_window`, this has to be applied again after every map.
+    `deiconify` resets the extended style, so a window dressed once comes back
+    activatable the next time it is shown — which is the whole life of a toast.
+    """
+    if window is None:
+        return False
+    try:
+        hwnd = int(window.wm_frame(), 16)
+    except (AttributeError, ValueError, tk.TclError):
+        return False
+    if not hwnd:
+        return False
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetWindowLongPtrW.argtypes = [
+            ctypes.c_void_p, ctypes.c_int]
+        user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        user32.SetWindowLongPtrW.argtypes = [
+            ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+        user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+    except (OSError, AttributeError):
+        log.debug("no user32 on this machine", exc_info=True)
+        return False
+    style = user32.GetWindowLongPtrW(ctypes.c_void_p(hwnd), _GWL_EXSTYLE)
+    user32.SetWindowLongPtrW(
+        ctypes.c_void_p(hwnd), _GWL_EXSTYLE,
+        style | _WS_EX_NOACTIVATE | _WS_EX_TOOLWINDOW,
+    )
+    return True
+
+
 def enable_dpi_awareness() -> bool:
     """Tell Windows the process is per-monitor DPI aware, before any window.
 

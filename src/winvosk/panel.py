@@ -30,12 +30,13 @@ from __future__ import annotations
 import logging
 import queue
 import tkinter as tk
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from datetime import date
 from tkinter import messagebox
 
 from PIL import ImageTk
 
-from . import config, overlay, text, theme, tray, vocabulary, widgets
+from . import config, diary, overlay, text, theme, tray, vocabulary, widgets
 
 log = logging.getLogger(__name__)
 
@@ -50,10 +51,38 @@ log = logging.getLogger(__name__)
 # they were not drawn for.
 WIDTH = 720
 HEIGHT = 700
+# The smallest the window is allowed to get, in design pixels. Below this the two
+# columns of the settings tab stop being side by side and the transcript stops
+# being readable, and `Paragraph` starts wrapping at a width a sentence does not
+# fit in. The window is resizable above it, and every width-dependent thing on
+# the page is measured at `<Configure>` rather than from `WIDTH`.
+MIN_WIDTH = 560
+MIN_HEIGHT = 460
 MARGIN = 24
 POLL_MS = 60
+# The history tab is last, always: it is the one tab that is read rather than
+# acted in, and a user who came for dictation has to find the record button where
+# it has always been. `Tabs` is told this index on every selection, so the order
+# is a named thing rather than a number typed twice.
+HISTORY_TAB = 2
 
 _CAPTURE_PROMPT = "capture_prompt"
+
+
+def _walk(widget: tk.Misc):
+    """Every widget under `widget`, the whole way down.
+
+    An explicit stack rather than recursion, so a deep page cannot exhaust it.
+    It reaches everything a `pack`ed tree holds, and a widget `place`d or `grid`ded
+    as well — but not one embedded in a canvas with `create_window`, which is not
+    in anybody's child list. The radio groups are inside cards, so they are found;
+    a group that ever moves into a canvas would have to be looked for directly.
+    """
+    pending = list(widget.winfo_children())
+    while pending:
+        child = pending.pop()
+        yield child
+        pending.extend(child.winfo_children())
 
 
 class Panel:
@@ -67,8 +96,12 @@ class Panel:
         autostart: bool = False,
         correct_words: bool = True,
         toggle: bool = False,
+        write_history: bool = True,
+        write_log: bool = True,
         language: str = text.DEFAULT_LANGUAGE,
         theme_name: str = theme.DEFAULT_THEME,
+        devices: Sequence[tuple[str, bool]] = (),
+        device: str | None = None,
     ) -> None:
         # Must happen before there is a window: afterwards Windows refuses, and
         # the panel comes up with every corner resampled a second time.
@@ -95,8 +128,19 @@ class Panel:
         self._status_key = "status_loading"
         self._status_raw = ""
         self._status_role = "muted"
-        self._device = ""
+        # What this machine can record from, as (name, is the system default).
+        # The panel is told rather than asked: a card that listed devices would
+        # have to import `sounddevice` to find them, and this module is imported
+        # by `--check-bundle` on a machine with no audio hardware at all.
+        self._devices = list(devices)
+        self._device_choice = device
+        self._device_box: tk.Frame | None = None
+        self._toast: widgets.Toast | None = None
         self._settings_page: widgets.Scroller | None = None
+        # What the rows on the history tab were last built from, so a look at the
+        # tab that finds nothing new does not throw ten rows away and build ten
+        # more. None until they exist.
+        self._history_shown: tuple[diary.Entry, ...] | None = None
         self._window_icon: list[ImageTk.PhotoImage] = []
         self._icon_theme = ""
         self._theme_name = theme_name if theme_name in theme.THEMES else theme.DEFAULT_THEME
@@ -119,8 +163,14 @@ class Panel:
         self._autostart = tk.BooleanVar(value=bool(autostart))
         self._correct_words = tk.BooleanVar(value=bool(correct_words))
         self._toggle_var = tk.BooleanVar(value=bool(toggle))
+        # What this machine is left with, rather than how the words behave: the
+        # history tab says so on its own page, because that is where the
+        # consequence of the first one is visible.
+        self._write_history = tk.BooleanVar(value=bool(write_history))
+        self._write_log = tk.BooleanVar(value=bool(write_log))
         self._dark_var = tk.BooleanVar(value=theme.is_dark(self._theme_name))
         self._language = tk.StringVar(value=language)
+        self._device_var = tk.StringVar(value=device or "")
         # The chip's equalizer is fed by the engine, not by the panel: the
         # levels live in the audio thread and are read here, on the Tk thread.
         self._overlay = overlay.RecordingOverlay(self._root, next_level)
@@ -143,7 +193,8 @@ class Panel:
 
     def _build(self) -> None:
         colours = self._colours
-        self._notebook = widgets.Tabs(self._shell, palette=colours)
+        self._notebook = widgets.Tabs(
+            self._shell, palette=colours, on_select=self._on_tab)
         self._notebook.pack(fill="both", expand=True)
 
         dictation = tk.Frame(self._notebook.content, bg=colours.bg, bd=0,
@@ -156,6 +207,28 @@ class Panel:
         self._settings_page = settings
         self._build_settings(settings)
         settings.bind_wheel()
+
+        # Added last and never reordered: see `HISTORY_TAB`.
+        history = widgets.Scroller(self._notebook.content, palette=colours)
+        self._notebook.add(history, text=text.t("tab_history"), key="tab_history")
+        self._history_page = history
+        self._build_history(history)
+        history.bind_wheel()
+        # The rows frame above is new and empty, so the cache of what it was last
+        # built from has to go with it: left in place it would tell `reload_history`
+        # that the list on screen is already right, which it is not.
+        self._history_shown = None
+        self.reload_history()
+
+    def _on_tab(self, index: int) -> None:
+        """Fill the history tab from the disk when it is looked at.
+
+        The panel spends most of its life on the dictation tab while records are
+        being written, so a tab filled once would show the state of the moment it
+        was opened rather than what has been said since.
+        """
+        if index == HISTORY_TAB:
+            self.reload_history()
 
     def _build_dictation(self, parent: tk.Frame) -> None:
         colours = self._colours
@@ -240,17 +313,19 @@ class Panel:
         )
 
     def _build_settings(self, parent: widgets.Scroller) -> None:
-        """Two columns, and one card across the top of both.
+        """One card across the top of the page, then a grid of six under it.
 
         The key gets the full width because its field has to hold a combination
         in monospace next to a Reset button, and neither of those is something to
-        squeeze for the sake of a column. Everything below it is a switch and a
-        sentence about it, which is exactly what a 320 px column is for, and the
-        tab then fits without scrolling at all on a display of any ordinary size.
+        squeeze for the sake of a column.
 
-        The two columns are packed rather than gridded: a grid would tie the two
-        sides to one row height and leave a short column with a gap under it, and
-        pack lets each side be as tall as its own content.
+        The six below it are a grid and not two packed columns, which is the whole
+        of what was wrong with this tab: packed, each side was as tall as its own
+        content, so one column ended in the middle of the page and the other ran
+        on past it, and the eye had three different bottoms to line up. In a grid
+        a row is as tall as its tallest cell and both of its cards are stretched
+        to that height, so the page has one rhythm and a card's own content stays
+        at the top of the space it is given.
         """
         colours = self._colours
         body = parent.body
@@ -303,14 +378,17 @@ class Panel:
         self._hotkey_hint = self._hint(hotkey.inner, "hint_idle", wrap)
         self._toggle_hint = self._hint(hotkey.inner, "toggle_hint", wrap)
 
-        columns = tk.Frame(body, bg=colours.bg, bd=0, highlightthickness=0)
-        columns.pack(fill="x", padx=pad, pady=(theme.px(theme.SPACE), 0))
-        left = self._column(columns, padx=(0, gap))
-        right = self._column(columns)
-        self._right_column = right
+        grid = tk.Frame(body, bg=colours.bg, bd=0, highlightthickness=0)
+        grid.pack(fill="x", padx=pad, pady=(theme.px(theme.SPACE), 0))
+        # `uniform` is what makes the columns the same width rather than the same
+        # weight: two cells that each ask for less than half the page would
+        # otherwise end up different sizes, which is the fault the packed columns
+        # had.
+        grid.grid_columnconfigure(0, weight=1, uniform="settings")
+        grid.grid_columnconfigure(1, weight=1, uniform="settings")
 
         # What the words do when they are recognised, then when the app starts.
-        insertion = self._card(left, "group_insertion", first=True)
+        insertion = self._card(grid, "group_insertion", cell=(0, 0))
         self._check(insertion.inner, "option_typing", self._live_typing,
                     "set_live_typing", column)
         self._check(insertion.inner, "option_clipboard", self._clipboard,
@@ -329,15 +407,38 @@ class Panel:
         self._check_words_button.pack(anchor="w", pady=(theme.px(theme.SPACE), 0))
         self._track(self._check_words_button, "button_check_words")
 
-        startup = self._card(left, "group_startup")
+        # Where the words come from. The options are the names Windows gives the
+        # hardware, so this is the one card on the page whose contents this module
+        # cannot write down: it is filled from outside, in `set_devices`.
+        device = self._card(grid, "group_input", cell=(0, 1))
+        self._device_box = tk.Frame(
+            device.inner, bg=colours.surface, bd=0, highlightthickness=0
+        )
+        self._device_box.pack(fill="x")
+        self._device_hint = self._hint(device.inner, "device_hint", column)
+
+        startup = self._card(grid, "group_startup", cell=(1, 0))
         self._check(startup.inner, "option_autostart", self._autostart,
                     "set_autostart", column)
         self._autostart_hint = self._hint(startup.inner, "autostart_hint", column)
 
-        # The two cards that are about this panel rather than about dictation.
+# The two cards that are about this panel rather than about dictation.
+        language = self._card(grid, "group_language", cell=(1, 1))
+        languages = tk.Frame(
+            language.inner, bg=colours.surface, bd=0, highlightthickness=0
+        )
+        languages.pack(fill="x")
+        # Endonyms, so each option reads correctly whichever language is active.
+        for code in text.LANGUAGES:
+            radio = widgets.Choice(
+                languages, palette=colours, kind="radio", text=text.name_of(code),
+                variable=self._language, command=self._pick_language, value=code,
+            )
+            radio.pack(side="left", padx=(0, theme.px(theme.SPACE_LG)))
+
         # A switch rather than two radios for the theme: there are two of them and
         # one is what you are looking at now.
-        appearance = self._card(right, "group_appearance", first=True)
+        appearance = self._card(grid, "group_appearance", cell=(2, 0))
         theme_row = tk.Frame(
             appearance.inner, bg=colours.surface, bd=0, highlightthickness=0
         )
@@ -353,18 +454,15 @@ class Panel:
         self._track(self._dark_label, "option_theme")
         self._theme_hint = self._hint(appearance.inner, "theme_hint", column)
 
-        language = self._card(right, "group_language")
-        languages = tk.Frame(
-            language.inner, bg=colours.surface, bd=0, highlightthickness=0
-        )
-        languages.pack(fill="x")
-        # Endonyms, so each option reads correctly whichever language is active.
-        for code in text.LANGUAGES:
-            radio = widgets.Choice(
-                languages, palette=colours, kind="radio", text=text.name_of(code),
-                variable=self._language, command=self._pick_language, value=code,
-            )
-            radio.pack(side="left", padx=(0, theme.px(theme.SPACE_LG)))
+        # Two switches, one card: they are two answers to the same question,
+        # which is how much of this machine the app leaves a trace on.
+        records = self._card(grid, "group_records", cell=(2, 1))
+        self._check(records.inner, "option_history", self._write_history,
+                    "set_history", column)
+        self._hint(records.inner, "history_switch_hint", column)
+        self._check(records.inner, "option_log", self._write_log,
+                    "set_logging", column, top_pad=theme.SPACE_SM)
+        self._hint(records.inner, "log_switch_hint", column)
 
         # Nothing here until a setting has something to say, and an empty
         # paragraph that reserves a line and two gaps is twenty pixels of the page
@@ -372,35 +470,211 @@ class Panel:
         self._options_hint = self._hint(body, "", wrap, bg=colours.bg)
         self._options_hint.pack_configure(padx=pad, pady=0)
 
-    # Small builders, so the settings tab above reads as a list of what is in it.
+        self.set_devices(self._devices, self._device_choice)
 
-    def _column(self, parent: tk.Misc, *, padx: int = 0) -> tk.Frame:
-        """One half of the settings tab, half as wide as the other by `expand`."""
-        column = tk.Frame(
-            parent, bg=self._colours.bg, bd=0, highlightthickness=0
+    def set_devices(
+        self, devices: Sequence[tuple[str, bool]], selected: str | None
+    ) -> None:
+        """Fill the device card with what this machine can record from.
+
+        `devices` is (name, is the system default) per device, `selected` is the
+        name in effect or None for the system default. Filled from outside rather
+        than asked for, so this module never imports `sounddevice`:
+        `--check-bundle` runs on a machine with no audio hardware at all and must
+        not fail on an import.
+
+        The names are what Windows calls the hardware and do not translate, so
+        this is also the one card a change of language rebuilds rather than
+        repaints.
+        """
+        self._devices = list(devices)
+        self._device_choice = selected
+        if self._device_box is None:
+            return
+        for child in self._device_box.winfo_children():
+            child.destroy()
+        known = {name for name, _ in self._devices}
+        if selected and selected not in known:
+            # Stored, and gone. The engine falls back to the automatic choice and
+            # says so in the log; the switch goes back to that rather than
+            # pretending a device that is not there is in effect.
+            log.info("the stored recording device %r is not connected", selected)
+            self._device_choice = None
+        self._device_var.set(self._device_choice or "")
+        self._device_box.pack(fill="x")
+        if not self._devices:
+            empty = widgets.Paragraph(
+                self._device_box, palette=self._colours,
+                text=text.t("device_none"), size=widgets.TYPE_CAPTION,
+                colour=self._colours.text_subtle, bg=self._colours.surface,
+                width=max(160, self._column_width()),
+            )
+            # Packed here rather than beside the box so that filling the card a
+            # second time — a change of language, a change of theme — finds it
+            # among the children it destroys rather than stacking a second one
+            # under it.
+            empty.pack(fill="x", anchor="w")
+            return
+        options: list[tuple[str, str]] = [("", text.t("device_auto"))]
+        options += [
+            (name, f"{name}{text.t('device_default_mark')}" if is_default else name)
+            for name, is_default in self._devices
+        ]
+        wraplength = max(160, self._column_width())
+        for value, label in options:
+            radio = widgets.Choice(
+                self._device_box, palette=self._colours, kind="radio", text=label,
+                variable=self._device_var, command=self._pick_device, value=value,
+                wraplength=wraplength,
+            )
+            radio.pack(fill="x", pady=(0, theme.px(theme.SPACE_XS)))
+
+    def _pick_device(self) -> None:
+        """Hand the chosen device to the app, which owns the disk and the engine."""
+        chosen = self._device_var.get()
+        self._commands.put(("set_device", chosen or None))
+
+    def _build_history(self, parent: widgets.Scroller) -> None:
+        """The tab as three lines of prose and a list of records.
+
+        A scroller rather than a frame, because ten records that each wrap to
+        three lines are taller than the window and a record that cannot be got to
+        is the same failure the settings tab already had once.
+        """
+        colours = self._colours
+        body = parent.body
+        pad = self._page_pad()
+        wrap = self._wrap()
+
+        self._history_caption = widgets.caption(
+            body, palette=colours, size=widgets.TYPE_CAPTION, bg=colours.bg
         )
-        column.pack(
-            side="left", fill="both", expand=True, padx=padx,
+        self._history_caption.configure(text=text.t("history_caption"))
+        self._history_caption.pack(fill="x", padx=pad,
+                                   pady=(theme.px(theme.SPACE), 0))
+        self._track(self._history_caption, "history_caption")
+
+        # Starts out saying what the double-click does, and is repainted with what
+        # happened when one is made. Nothing else on the page says it.
+        self._history_hint = self._hint(body, "history_hint", wrap, bg=colours.bg)
+        self._history_hint.pack_configure(padx=pad, pady=0)
+        # While the switch is off this is the truth about the list above it.
+        self._history_note = self._hint(body, "history_off_note", wrap, bg=colours.bg)
+        self._history_note.pack_configure(padx=pad, pady=0)
+        self._history_note.show(not self._write_history.get())
+
+        self._history_card = widgets.Card(body, palette=colours)
+        self._history_rows = tk.Frame(
+            self._history_card.inner, bg=colours.surface, bd=0,
+            highlightthickness=0,
         )
-        return column
+        self._history_rows.pack(fill="both", expand=True)
+
+        self._history_empty = widgets.Paragraph(
+            body, palette=colours, text=text.t("history_empty"),
+            colour=colours.text_subtle, bg=colours.bg, width=wrap,
+        )
+        self._history_empty.pack(fill="x", padx=pad,
+                                 pady=(theme.px(theme.SPACE), 0))
+        self._track(self._history_empty, "history_empty")
+
+    def reload_history(self, *, force: bool = False) -> None:
+        """Fill the tab from what is on disk right now.
+
+        The rows are thrown away and built again rather than updated in place:
+        the list is ten rows long, it is rebuilt a few times an hour, and a
+        record that changed is a different record rather than an edited one.
+
+        But not when the ten rows would be the same ten rows. The tab is filled at
+        start up, on every look at it and after every finished sentence, and
+        three of those four find nothing new — the panel had a working list on
+        screen and threw it away to build the same thing again, each row a frame,
+        a paragraph and a text widget of its own. The entries are therefore
+        compared first, and `force` is there for the one caller that has to redraw
+        the same list for another reason: the recording switch moving changes what
+        the note under it says, and nothing in the diary.
+        """
+        entries = diary.recent()
+        shown = tuple(entries)
+        if shown == self._history_shown and not force:
+            return
+        self._history_shown = shown
+        for child in self._history_rows.winfo_children():
+            child.destroy()
+        today = date.today()
+        # A bare time is a lie after midnight, so anything that is not from today
+        # carries its day as well. The stamps are built first because the column
+        # they sit in is as wide as the widest of them.
+        stamps = [entry.stamp if entry.day == today
+                  else f"{entry.day:%d.%m} {entry.stamp}" for entry in entries]
+        stamp_font = theme.mono(widgets.TYPE_TINY)
+        stamp_width = max(
+            (theme.measure(stamp_font, stamp) for stamp in stamps), default=0
+        ) + theme.px(theme.SPACE_XS)
+        for position, entry in enumerate(entries):
+            if position:
+                # A hairline between records. Rows are read one at a time and a
+                # wrapped record is three lines tall, so without it the list is
+                # a wall of prose with times in it.
+                widgets.rule(self._history_rows, palette=self._colours).pack(
+                    fill="x", padx=self._page_pad())
+            widgets.HistoryRow(
+                self._history_rows, palette=self._colours, stamp=stamps[position],
+                body=entry.text, width=self._wrap() - stamp_width,
+                stamp_width=stamp_width,
+                command=lambda said=entry.text: self._commands.put(
+                    ("copy_history", said)),
+            ).pack(fill="x")
+        # The rows did not exist when the page bound its wheel, and a `Text` in a
+        # row would otherwise scroll its own three lines instead of the page.
+        self._history_page.bind_wheel_below(self._history_rows)
+        if entries:
+            self._history_card.pack(fill="x", padx=self._page_pad(),
+                                    pady=theme.px(theme.SPACE))
+        else:
+            self._history_card.pack_forget()
+        # `show`, and then nothing. `pack_configure` on a paragraph that `show` has
+        # just taken out of the layout **packs it again** — and it packs it with
+        # whatever width it happens to have at that moment, which is the width of
+        # its longest word rather than the width of the page. That is the second
+        # half of the vertical text on this tab, and the half that survived the
+        # width guards: the empty state and the recording-off note both reappear,
+        # one letter per line, in the middle of a list that has records in it. The
+        # padding they need was given when they were built.
+        self._history_empty.show(not entries)
+        self._history_note.show(not self._write_history.get())
+
+    # Small builders, so the settings tab above reads as a list of what is in it.
 
     def _card(self, parent: tk.Misc, key: str, padx: int = 0,
               first: bool = False,
-              aside: Callable[[tk.Misc], tk.Misc] | None = None) -> widgets.Card:
+              aside: Callable[[tk.Misc], tk.Misc] | None = None,
+              cell: tuple[int, int] | None = None) -> widgets.Card:
         """A card with its own title, which a language change repaints in place.
 
-        `first` is the top card of a column, which is already spaced from
-        whatever is above the column by the row's own padding: giving it the gap
-        as well is twenty pixels of nothing, twice over, and the settings tab has
-        six cards.
+        `first` is the top card of a packed run, which is already spaced from
+        whatever is above it by the row's own padding: giving it the gap as well
+        is twenty pixels of nothing, and the settings tab has six cards.
+
+        `cell` is (row, column) in a `grid` instead, where the row is as tall as
+        its tallest cell and both cards are stretched to it — which is the whole
+        reason the six cards are in a grid rather than in two packed columns.
         """
         card = widgets.Card(
             parent, palette=self._colours, padding=theme.SPACE
         )
-        card.pack(
-            fill="x", padx=padx,
-            pady=(0 if first else theme.px(theme.SPACE), 0),
-        )
+        if cell is None:
+            card.pack(
+                fill="x", padx=padx,
+                pady=(0 if first else theme.px(theme.SPACE), 0),
+            )
+        else:
+            row, column = cell
+            card.grid(
+                row=row, column=column, sticky="nsew",
+                padx=((0, theme.px(theme.SPACE_SM)) if column == 0 else (0, 0)),
+                pady=(0, theme.px(theme.SPACE)),
+            )
         # `aside` is a factory rather than a widget because a control can only be
         # given the title row as its real parent once that row exists, and tkinter
         # cannot move a widget into it afterwards. Assigning `widget.master` changes
@@ -457,6 +731,78 @@ class Panel:
                 f"ends at {bottom} and the page shows up to {edge}"
             )
         return (f"{content}px of settings in a {viewport}px page, "
+                f"{'fits' if content <= viewport else 'scrolls'}")
+
+    def check_radios(self) -> str:
+        """Prove that one and only one option in each radio group is marked.
+
+        A group is a variable and a list of codes, and a radio paints its mark
+        from whether the variable holds **its own** code. Painting from whether
+        the variable is simply true marks every radio in the group at once,
+        because every code is a non-empty string — which is how the language pair
+        came up with English and Русский both filled in and neither of them
+        chosen. Nothing else on the page can see that: the variable holds exactly
+        one value whatever the marks say, so the panel worked and looked wrong.
+
+        Called by `run.py --check-bundle`, because the only other way to find out
+        is to look at it.
+        """
+        groups: dict[int, list[widgets.Choice]] = {}
+        for choice in _walk(self._shell):
+            if isinstance(choice, widgets.Choice) and choice.is_radio:
+                groups.setdefault(id(choice.variable), []).append(choice)
+        if not groups:
+            raise AssertionError("no radio group was built at all")
+        for choices in groups.values():
+            marked = [choice for choice in choices if choice.is_marked]
+            if len(marked) != 1:
+                names = ", ".join(
+                    f"{choice.value!r}{'*' if choice.is_marked else ''}"
+                    for choice in choices
+                )
+                raise AssertionError(
+                    f"a radio group has {len(marked)} option(s) marked instead of "
+                    f"one: {names}"
+                )
+        return f"{len(groups)} group(s), one option marked in each"
+
+    def check_history_reachable(self) -> str:
+        """Prove the last record on the history tab can be got to, and report how.
+
+        The same walk `check_settings_reachable` does, on the other scrolling
+        page: scroll to the end and ask whether the last thing on it is inside
+        the window. A tab of records that cannot be scrolled to its last record
+        is worse than an empty one, because it looks complete.
+
+        Called by `run.py --check-bundle`, which is the only check that opens a
+        third tab at all.
+        """
+        page = self._history_page
+        if page is None:
+            raise AssertionError(
+                "the history tab was never built, so there is nothing to reach"
+            )
+        canvas = page.canvas
+        self._root.update_idletasks()
+        region = canvas.bbox("all")
+        content = region[3] if region else 0
+        viewport = canvas.winfo_height()
+        canvas.yview_moveto(1.0)
+        self._root.update_idletasks()
+        rows = [child for child in self._history_rows.winfo_children()
+                if isinstance(child, widgets.HistoryRow)]
+        # The empty state and the list take each other's place, and an unpacked
+        # widget still answers with a position — which is why this picks the one
+        # that is actually on the page.
+        last = rows[-1] if rows else self._history_empty
+        bottom = last.winfo_rooty() + last.winfo_height()
+        edge = canvas.winfo_rooty() + canvas.winfo_height()
+        if bottom > edge + 1:
+            raise AssertionError(
+                f"the last record is unreachable: the list ends at {bottom} and "
+                f"the page shows up to {edge}"
+            )
+        return (f"{len(rows)} record(s), {content}px in a {viewport}px page, "
                 f"{'fits' if content <= viewport else 'scrolls'}")
 
     def _hint(self, parent: tk.Misc, key: str, wrap: int, *, bg: str | None = None):
@@ -536,7 +882,14 @@ class Panel:
             return
         self._language.set(code)
         self._paint_messages()
+        # The strip is built inside `Tabs` and never handed out, so it repaints
+        # itself from the keys it was added with.
+        self._notebook.repaint_labels()
         self._paint_record_button()
+        # The device card is built from strings rather than keys, because the
+        # labels are the names Windows gives the hardware. Those do not translate,
+        # so there is nothing to repaint and only the option list is rebuilt.
+        self.set_devices(self._devices, self._device_choice)
         if self._capturing:
             self.show_capture()
         else:
@@ -580,6 +933,12 @@ class Panel:
         theme.apply(self._root, self._colours)
         theme.reset()
         self._root.configure(bg=self._colours.bg)
+        if self._toast is not None:
+            try:
+                self._toast.destroy()
+            except tk.TclError:
+                log.debug("the toast is already gone", exc_info=True)
+            self._toast = None
         self._shell.destroy()
         self._shell = tk.Frame(
             self._root, bg=self._colours.bg, bd=0, highlightthickness=0
@@ -600,6 +959,8 @@ class Panel:
         self.set_recording(self._recording)
         self._refresh_status()
         self._render()
+        # The rows were built in the palette this rebuild has just thrown away.
+        self.reload_history()
         if self._capturing:
             self.show_capture()
         else:
@@ -651,6 +1012,13 @@ class Panel:
         150% display lands a 900 px window and pushes it off the corner. `wm
         geometry` takes no float either, which is the other half of the same
         mistake.
+
+        `minsize` is the size the layout was drawn for and no more, so the window
+        can be resized in every direction but never squeezed into a shape the two
+        columns of settings were not drawn for. It used to be the full design
+        size, which is the same number the geometry already asks for - and a
+        minimum equal to the current size is a window that cannot be resized at
+        all, by the mouse or by the system, which is what it was.
         """
         ratio = theme.scale()
         width, height = int(round(WIDTH * ratio)), int(round(HEIGHT * ratio))
@@ -659,7 +1027,7 @@ class Panel:
         x = max(0, screen_w - width - int(MARGIN * ratio))
         y = max(0, screen_h - height - int(MARGIN * ratio))
         self._root.geometry(f"{width}x{height}+{x}+{y}")
-        self._root.minsize(theme.px(WIDTH), theme.px(HEIGHT))
+        self._root.minsize(theme.px(MIN_WIDTH), theme.px(MIN_HEIGHT))
 
     def _dress_window(self) -> bool:
         """Everything about the window frame itself, in one place.
@@ -792,6 +1160,55 @@ class Panel:
     def set_autostart(self, value: bool) -> None:
         self._autostart.set(bool(value))
 
+    def set_history_writing(self, value: bool) -> None:
+        """Show the switch as the disk holds it, and say so where it shows.
+
+        The history tab is told as well as the switch, because a user who turns
+        recording off and finds nothing new on the history tab has to be able to
+        read that it was asked for.
+        """
+        self._write_history.set(bool(value))
+        self._history_note.show(not self._write_history.get())
+        # The list itself has not changed, so it is not rebuilt — but the note
+        # under it has, and that is what this call is for.
+        self.reload_history(force=True)
+
+    def set_log_writing(self, value: bool) -> None:
+        self._write_log.set(bool(value))
+
+    def set_history_hint(self, message: str, error: bool = False) -> None:
+        """What happened on the history tab, said on the history tab.
+
+        Its own hint rather than `set_option_hint`: that one is a widget on the
+        settings page, and a message posted to a tab nobody is looking at is a
+        message nobody reads.
+
+        And a toast as well as the line, because the line is at the top of a list
+        the reader has usually scrolled down: a double-click that copied a record
+        two thirds of the way down the page put its answer off the top of the
+        screen, and the tray balloon is the one notification Windows has taught
+        everyone to dismiss without reading.
+        """
+        self._history_hint.configure(
+            text=message,
+            fg=self._colours.danger if error else self._colours.success,
+        )
+        self.toast(message, error=error)
+
+    def toast(self, message: str, *, error: bool = False) -> None:
+        """Say `message` over the panel for a moment, then take it away.
+
+        Built on first use and thrown away with the panel. A change of theme
+        rebuilds it, because a toast is drawn entirely from the palette and a card
+        left in the colours of the theme that has just been switched off would be
+        the one window on screen that does not match.
+        """
+        if not message:
+            return
+        if self._toast is None:
+            self._toast = widgets.Toast(self._root, palette=self._colours)
+        self._toast.show(message, error=error)
+
     def set_word_count(self, count: int) -> None:
         """Say how many words the correction pass has to work with."""
         self._word_count = count
@@ -885,8 +1302,16 @@ class Panel:
         self._root.focus_force()
 
     def set_ready(self, model: str, device) -> None:
+        """The engine is up: name the model, and say the device only in the log.
+
+        The device used to be part of the window title. It is not a window's
+        business: the name Windows gives an input is long, differs per machine
+        and changes with the sound mapper, so a title built from it was a
+        different string on every start. It is on the settings tab, where the
+        choice is made, and here in the log, where a fault is looked for.
+        """
         self._model.configure(text=f"{model}")
-        self._device = str(device)
+        log.info("engine ready: %s on %r", model, device)
         self._set_status_key("status_ready", "success")
         self._root.title(self._title())
 
@@ -956,15 +1381,17 @@ class Panel:
         self._dot.set_colour(self._status_colour(self._status_role))
 
     def _title(self) -> str:
-        """`WinVosk <version>`, plus the device once the engine has named one.
+        """`WinVosk <version>`, and the version is the whole of it.
 
         The release is in the title rather than only in `--diagnose`, because a
-        bug report starts with the title of the window that misbehaved.
+        bug report starts with the title of the window that misbehaved. The device
+        that is recording is not in it: the name Windows gives an input is long,
+        differs per machine, and changes with whatever the sound mapper feels like
+        doing, so a title built from it was a different string on every start. The
+        device is on the settings tab, where a choice is made, and in the log,
+        where a fault is looked for.
         """
-        name = f"{config.APP_NAME} {config.VERSION}"
-        if not self._device:
-            return name
-        return f"{name} — {text.t('title_input', device=self._device)}"
+        return f"{config.APP_NAME} {config.VERSION}"
 
     # The loop.
 
@@ -976,6 +1403,12 @@ class Panel:
 
     def destroy(self) -> None:
         theme.reset()
+        if self._toast is not None:
+            try:
+                self._toast.destroy()
+            except tk.TclError:
+                log.debug("the toast is already gone", exc_info=True)
+            self._toast = None
         try:
             self._overlay.destroy()
         except tk.TclError:

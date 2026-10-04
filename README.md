@@ -52,11 +52,18 @@
 - 🎯 **Push to talk by default, toggle if you prefer.** Recording lasts exactly
   as long as you hold the keys — or one press starts it and the next one stops
   it. See [Recording mode](#recording-mode).
+- 🎤 **Any microphone, and only while you speak.** The recording device is yours
+  to pick in **Settings**, and the microphone is opened when a recording starts
+  and closed when it stops — between sentences Windows does not list WinVosk as
+  using it. See [Recording device](#recording-device).
 - ⌨️ **Layout independent.** Text is typed as `KEYEVENTF_UNICODE` keystrokes, so
   Russian comes out right with a Latin layout selected. The clipboard is never
   used to insert anything.
 - 🧾 **Your own words.** A plain text list fixes the words the model keeps
   mishearing — see [Custom Vocabulary](#custom-vocabulary-phrasestxt).
+- 🕘 **A history you can read.** The last ten finished sessions are on their own
+  tab, and a double-click puts one on the clipboard — see
+  [The diary](#the-diary). Both it and the log file have a switch.
 - 🕶️ **No console, ever.** Tray icon, panel, chip. `--diagnose` writes a report
   you can read in Notepad if you ever need one.
 - 🌍 **Any model.** Russian ships; the other 31 are one folder away — see
@@ -209,7 +216,7 @@ forever.
 
 ## The Panel and Tray
 
-The panel has two tabs.
+The panel has three tabs.
 
 **Dictation** — the recognised text as it arrives, with the model name in the
 corner, the hold button, **Stop**, **Copy** and **Clear**, and the hotkey
@@ -218,11 +225,22 @@ in the footer. This tab does nothing configurable; it is the transcript.
 <img src="docs/img/panel-ru.png" width="46%" alt="The WinVosk panel with the interface in Russian, showing a finished dictation">
 <img src="docs/img/panel-en.png" width="46%" alt="The same WinVosk window in English, after switching the interface language in place">
 
-**Settings** — everything you can change. The tab is taller than the window on a
-small screen, so it scrolls: the wheel over it, or the scrollbar, takes you down to
-**Start with Windows** and **Language** at the bottom. See below.
+**Settings** — everything you can change, in six cards of two columns. The tab is
+taller than the window on a small screen, so it scrolls: the wheel over it, or the
+scrollbar, takes you down to **Language**, **Appearance** and **Records** at the
+bottom. See below.
 
-<img src="docs/img/panel-settings.png" width="46%" alt="The Settings tab in Russian: the dictation key, the three switches, the word-list button, the startup entry and the language selector">
+<img src="docs/img/panel-settings.png" width="46%" alt="The Settings tab in Russian: the dictation key across the top, then the three switches for where the text goes beside the recording-device picker, and the startup entry, the language selector, the theme switch and the two record switches below">
+
+**History** — the last ten finished sessions, newest first. Double-click a row to
+copy that record to the clipboard; a card appears over the panel to say that it
+was copied. See [The diary](#the-diary).
+
+<img src="docs/img/panel-history.png" width="46%" alt="The History tab in Russian: ten recent records with a time on the left and the recognised text beside each one">
+
+The window can be resized — drag any edge or corner — down to a size that still
+holds the two columns of settings, and its title is `WinVosk` and the version, so
+a bug report can be tied to a build.
 
 The tray icon is the app's real home:
 
@@ -267,6 +285,27 @@ still inserts text as keystrokes.
 [Custom vocabulary](#custom-vocabulary-phrasestxt). It works on finished phrases
 only, never on the half-heard text, and every replacement is written to
 `logs\app.log` so you can see whether it is helping.
+
+### Recording device
+
+**Recording device** — a list of everything PortAudio can record from on this
+machine, with the one Windows would use marked **default**. Pick a different one
+and every recording from then on comes from it. The first entry, **System
+default**, is the app's own choice: the device each host API calls default, or the
+first one that can record at all, which is not always the same device.
+
+It is stored in `settings.json` as `input_device` — the **name** of the device,
+not its number, because a number is a position in a list Windows rebuilds per
+machine and per boot: stored as a number, a saved microphone becomes a different
+one the next time the app starts, with nothing to say so. A stored name that is
+not connected any more falls back to the system default and says so in
+`logs\app.log`.
+
+**The microphone is opened only while a recording runs.** It is opened when you
+press the dictation key and closed the moment you let go, so between sentences
+Windows does not list WinVosk as using the microphone, and another program can
+take it. The model stays loaded throughout — that is the expensive part, and it is
+why the first syllable of a recording is not lost to start-up time.
 
 ### Appearance
 
@@ -313,6 +352,25 @@ The choice is remembered in `settings.json`.
 
 Note that this is the **interface** language only. It has nothing to do with the
 language being dictated — see [Models and languages](#models-and-languages).
+
+### Records and the log
+
+Two switches, one card. They answer the same question: how much of this machine
+the app leaves a trace on.
+
+**Keep the history** — append every finished session to `logs\YYYY-MM-DD.txt`.
+On by default. Off, nothing new is written; the files already there are left
+alone and the **History** tab keeps showing them, with a line saying that new
+records are not being saved. See [The diary](#the-diary).
+
+**Write the log file** — how much `logs\app.log` records. On by default, and it
+records everything. Off, it records **only warnings and errors**: the file is
+still written, still rotated at 2 MB × 3, and a crash still leaves something to
+read. It does not go quiet, because a windowless build has no console and this
+file is the only diagnostic there is — see [Diagnostics](#diagnostics).
+
+The switch is in force at once, with no restart: the file handler is re-levelled
+rather than the process, so `--diagnose` and the probes keep logging as usual.
 
 ### Dictation key
 
@@ -388,10 +446,16 @@ menu appears, the line above it names the key that got through.
   "copy_to_clipboard": false,
   "correct_words": true,
   "toggle_recording": false,
+  "write_log": true,
+  "write_history": true,
   "language": "en",
-  "theme": "light"
+  "theme": "light",
+  "input_device": null
 }
 ```
+
+`input_device` is `null` for the system default and otherwise the name of a
+recording device — see [Recording device](#recording-device).
 
 Nothing in that file can stop the app from starting. A missing, malformed or
 wrongly shaped file costs one line in `logs\app.log` and the defaults are used;
@@ -407,7 +471,7 @@ These live in `src\winvosk\config.py` and need an editor:
 | Constant | Meaning |
 | --- | --- |
 | `MODEL_NAME` | the preferred model directory |
-| `MIC_DEVICE` | PortAudio input index; `None` for the system default |
+| `MIC_DEVICE` | recording device **name**, overriding the one chosen in Settings; `None` for that choice |
 | `TYPE_DELAY` | pause after each revision, in seconds — raise it if a target application cannot keep up |
 | `MAX_SESSION_SECONDS` | ceiling on one session; rare while holding, load-bearing in toggle mode |
 | `SHOW_WORDS` | log word timings instead of just the text |
@@ -593,6 +657,11 @@ Two known shapes, both upstream behaviour rather than a fault here:
 
 ### The microphone is not the one I want
 
+**Settings** ▸ **Recording device** picks it — see
+[Recording device](#recording-device).
+
+To see what is there, and what a recording will actually open:
+
 ```powershell
 .\.venv\Scripts\python.exe .\src\run.py --diagnose
 ```
@@ -607,8 +676,8 @@ Read two lines:
 
 That last part matters: a device that only accepts 44100 Hz cannot record at the
 16000 Hz the decoder wants, and PortAudio refuses the stream outright
-(`Invalid device`). There is no setting that fixes that — it is a property of the
-driver. Check the native rate before blaming the app.
+(`Invalid device`). No setting fixes that — it is a property of the driver.
+Check the native rate before blaming the app.
 
 ---
 
@@ -766,7 +835,19 @@ through the exe's own folder once it is built.
 
 Every finished session is appended to `logs\YYYY-MM-DD.txt` in UTF-8, whether or
 not anything was typed. It is a plain text file — open it in Notepad. It is not
-required by anything and can be deleted freely.
+required by anything and can be deleted freely. **Keep the history** off stops new
+records and changes nothing already written.
+
+The **History** tab — the third one, after **Dictation** and **Settings** — shows
+the last ten records from those files, newest first, across days. Each row is a
+time and what was said; anything that is not from today carries its day as well.
+**Double-click a row to copy that record to the clipboard.** A single click does
+nothing: a click that quietly replaces the clipboard is not worth the one
+keystroke it saves. Nothing is edited, deleted or searched — it is a list of what
+was said, and it is read-only.
+
+The tab fills itself every time you open it, so a record is there as soon as the
+session that made it has finished.
 
 ---
 
@@ -800,6 +881,10 @@ Get-Content .\logs\app.log -Tail 40
 
 A healthy log has no `WARNING` and no `ERROR`. If you report a problem, the last
 30 lines of this file are the most useful thing you can attach.
+
+**Write the log file** off keeps the file and drops the routine lines from it:
+`INFO` is not recorded, `WARNING` and `ERROR` are. The report above then shows
+`log file : … (errors only)`, and a crash still has something to say.
 
 More detail on the internals, the verification probes and the design decisions is
 in [`docs/HOWTO.md`](docs/HOWTO.md).

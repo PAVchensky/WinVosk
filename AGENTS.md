@@ -21,7 +21,7 @@ repository.
 ## Release
 
 `VERSION` in `src\winvosk\config.py` is the single source of the release number,
-currently **1.6.3**. It is not a comment and not a tag nobody reads: `--diagnose`
+currently **1.8.0**. It is not a comment and not a tag nobody reads: `--diagnose`
 prints it on its first line, the panel puts it in the window title, and the
 own-word report and the frozen `--diagnose` dialog carry it.
 `winvosk\__init__.py` derives `__version__` from it rather than repeating it —
@@ -33,7 +33,11 @@ two part number sorts wrongly in a release list and has nowhere to put a patch.
 
 - **PATCH** — a fix that changes nothing a user can observe. `1.6.3` → `1.6.4`.
 - **MINOR** — behaviour added, or behaviour changed in a way that is still
-  backwards compatible. `1.6.4` → `1.7.0`.
+backwards compatible. `1.6.4` → `1.7.0`. **Adding `settings.json` keys is
+MINOR**, provided every existing file still loads and every existing default
+keeps its meaning; the MAJOR wording below is about keys that change or go
+away. 1.7.0 was chosen this way for `write_log` and `write_history`, and 1.8.0
+for `input_device` plus the recording device card.
 - **MAJOR** — something a user depends on changes or is removed: `settings.json`
   keys, a hotkey default, a switch that stops existing, the insertion method.
   `1.7.0` → `2.0.0`.
@@ -165,7 +169,7 @@ Get-Content .\logs\<yyyy-mm-dd>.txt -Encoding UTF8 -Tail 5
 Check 2 must print a `base dir` line that is the checkout root, currently
 `base dir    : D:\AI\Vosk`; anything else means the app resolved paths somewhere
 else and the rest of the bar is meaningless. Its first line must be
-`WinVosk   : 1.6.3`, which is the cheap way to notice that `VERSION` was not bumped.
+`WinVosk   : 1.8.0`, which is the cheap way to notice that `VERSION` was not bumped.
 
 Check 3 must print an empty string for silence, never raise. Check 4 must print
 `VERDICT: PASS` twice: once for the hotkey, once for typing, the latter with
@@ -176,7 +180,9 @@ change is not finished.
 
 Check 6 builds the real panel, resolves the `ttk` theme, checks that the window
 was never mapped at start up, that a tray click brings it up, that the bottom of
-the settings tab is reachable, that the chip maps
+the settings tab is reachable, that exactly one option in each radio group is
+marked, that the history tab renders and its last record
+can be scrolled to, that the chip maps
 with its Pillow plate while the panel is in the tray, and that `Shell_NotifyIcon`
 accepts the notification-area icon, then reports. It is in
 the bar rather than optional because a bundle can be missing a Tcl script or a
@@ -198,13 +204,34 @@ therefore waits for `TrayIcon.visible` and logs a **warning** if it never arrive
 and check 6 fails on it. Under `console=False` that warning is the only evidence
 there will be: see the next invariant.
 
+**Never force the tray icon back.** `pystray.Icon.visible` is set from pystray's
+own side of `Shell_NotifyIcon`, and it is never told whether the shell took it,
+so the only way to make pystray issue a second `NIM_ADD` — `visible = False` then
+`True` — reports success on its first attempt whether or not the notification area
+has the icon. Wait for `visible` instead, on a daemon thread that `stop()` ends:
+`WM_TASKBARCREATED` covers an Explorer that restarts under a live icon, and the
+case it does not cover is a shell that was not ready when the icon first asked.
+Measured on a test machine: two starts in a row refused the icon and a third took
+it seconds later, and those two starts had no way into the panel at all.
+
 A plain `pythonw.exe` launch has no console, so the log file is the only
-diagnostic. Never trust a silent start.
+diagnostic. Never trust a silent start. This is also why **Write the log file**
+off drops `INFO` at the *handler* and never stops the file: `config.file_level`
+is the whole switch, the root logger stays at `INFO` so the console flags and the
+probes are unaffected, and a run that cannot write a diagnostic line at all is
+worse than a noisy one.
 
 `tools\settings_probe.py` is a sixth check that is not part of the bar: it is
 headless, needs no GUI, microphone, model or real hook, and covers the
-`settings.json` keys, the switches and the hotkey capture. Run it after any
-change to `settings.py`, `panel.py` or the settings part of `run.py`.
+`settings.json` keys — including the recording device, which is a name or an
+explicit `null` and refuses a number — the switches and the hotkey capture. Run it
+after any change to `settings.py`, `panel.py` or the settings part of `run.py`.
+`tools\history_probe.py` is the tenth: same shape, and it covers the history
+reader and the switch that gates it — several days read back newest first, a
+hand edited line, a byte order mark, a write still in progress, the files in
+`logs\` that are not history, the limit, a missing folder, a record in Cyrillic
+round-tripped, and `append` obeying the switch. Run it after any change to
+`diary.py` or to the history part of `run.py`.
 `tools\correct_probe.py` is the seventh, same shape: it covers the own-word
 correction rules, the cutoff boundary and the cost, plus the wiring in `run.py`
 that keeps the correction off the partials. Run it after touching `corrector.py`,
@@ -216,8 +243,12 @@ and covers the message table and the language switch. Run it after any change to
 GitHub-facing pages: dead anchors in each file, Cyrillic that escaped into English
 prose, control names that no longer match `text.py`, a `settings.json` example
 naming the wrong shipped language, the corrector cutoff stated backwards, and
-heading parity between the two guides. It is the only thing standing between a
-plausible sentence and a documented lie — the page once claimed the interface
+heading parity between the two guides, and — since the 1.8 release — every local
+image a page points at existing and being non-empty. That last rule earned its
+place by finding a screenshot that both guides embedded and nobody had committed,
+which the other seven could not see: R2 stops at the `#` of an anchor and nothing
+else looks at a file. It is the only thing standing between a
+plausible sentence and a documented lie - the page once claimed the interface
 ships in Russian, and once said a word *more* than 0.75 similar is left alone,
 which is the opposite of what `corrector.CUTOFF` does. Run it after any change to
 `README.md`, `README.ru.md`, `docs\HOWTO.md`, `text.py`, `corrector.py` or
@@ -263,6 +294,32 @@ which is the opposite of what `corrector.CUTOFF` does. Run it after any change t
   which device a run will actually use. The one input device WDM-KS exposes
   takes only its native rate, so a 16 kHz request fails there too; that is a
   machine fact, not something the app can talk its way out of.
+- **Never hold the microphone open while idle.** The stream is opened by
+  `_open_stream` when a recording starts and closed by `_close_stream` when it
+  stops, never at start up: an app that lives in the notification area between
+  sentences and holds the device for the whole of its life is listed by Windows
+  as using the microphone for as long as it runs, which is unexplainable to a
+  user and refused to every other program. The **model** stays loaded, because
+  that is the expensive part; opening a stream costs tens of milliseconds.
+- **Never store a PortAudio device index.** An index is a position in a list
+  Windows builds per machine, per host API and per boot, so a stored one is a
+  pointer at whatever sits in that slot today. `settings.json` holds the device
+  **name**, `input_device()` matches it case-insensitively and falls back to the
+  automatic choice with a warning, and `Panel.set_devices` puts the switch back on
+  that fallback rather than marking a device that is not there.
+- **Never mark a radio from whether its variable is true.** Every code in a radio
+  group is a non-empty string, so truthiness marks all of them at once and the
+  language pair came up with both ends filled in and neither chosen — with the
+  variable holding one value throughout, so nothing else could see it. Paint from
+  whether the variable holds **this** widget's code (`Choice._is_on`), and let
+  `Panel.check_radios`, which `--check-bundle` runs, keep it that way.
+- **Never lay a page out from a width an unmapped window reports.** A window that
+  has never been shown is 1 px wide, and `Scroller` copies the canvas width into
+  the body frame: every paragraph on the page then breaks one word per line, and
+  a history tab arrives as a column of single letters down the bottom. Both ends
+  guard the width rather than the page — `Scroller._on_canvas` ignores a canvas
+  under 2 px, `Paragraph._on_frame` ignores a frame under `MIN_PIXELS`. The real
+  width arrives with the `<Configure>` that comes with the map.
 - **Never insert text through the clipboard.** Typing with `KEYEVENTF_UNICODE`
   is layout independent, needs no focus switching, and cannot paste into the
   wrong window. `SetForegroundWindow` is refused for a process that neither
@@ -312,6 +369,18 @@ which is the opposite of what `corrector.CUTOFF` does. Run it after any change t
   update must be applied as a diff against what was typed, or the screen fills
   with duplicated and half corrected words. After a finished utterance the
   prefix resets.
+- **The separating space belongs to the boundary, never to a fragment.**
+  `Typer.apply` adds it only when `boundary=True`. Adding it to every fragment
+  put a space inside any word the model went on to extend, so each extension had
+  to erase that space again — a Backspace per grown word, for nothing. Measured
+  over the sentence from the bug report: 2 Backspaces down to 0 word by word,
+  24 down to 12 one letter at a time, and the text on screen is identical
+  either way. This is not only tidiness. **A Backspace is the one keystroke here
+  that is not sent as `KEYEVENTF_UNICODE`** — it goes out as a real `VK_BACK`,
+  so it is the one event on the chain a keyboard hook can act on by layout. A
+  layout switcher that swallows it leaves the space standing where the word
+  grew, which is how `ии` came out as `и и` while the transcript stayed correct.
+  Every Backspace that remains is a genuine rewrite.
 - **Never type into this app's own window.** `foreign_in_front()` gates all
   typing, and a held fragment is dropped rather than carried over.
 - **The `INPUT` struct must be 40 bytes on x64.** The union has to include a

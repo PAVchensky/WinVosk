@@ -32,7 +32,7 @@ from collections.abc import Callable
 
 from PIL import ImageTk
 
-from . import theme
+from . import text, theme
 
 log = logging.getLogger(__name__)
 
@@ -425,6 +425,14 @@ class Choice(_Textual, tk.Frame):
             anchor="w", justify="left", wraplength=wraplength or 0,
         )
         self._text.pack(side="left", anchor="n", fill="x", expand=True)
+        # The wrap is re-measured against the width this control is actually given,
+        # not against the width the page was planned at. A `tk.Label` with a
+        # `wraplength` does not re-wrap when it is handed less room than it asked
+        # for: it keeps the line breaks it had and clips the last word off. In a
+        # three column settings page that read «Печатать в активное с…», while the
+        # page's own arithmetic said there was room for the whole sentence.
+        self._wraplength = wraplength or 0
+        self.bind("<Configure>", self._on_frame)
         for widget in (self._box, self._text, self):
             widget.bind("<Button-1>", self._toggle)
             widget.bind("<Enter>", self._enter)
@@ -436,6 +444,31 @@ class Choice(_Textual, tk.Frame):
             self.bind("<Destroy>", self._forget)
         self._plate: ImageTk.PhotoImage | None = None
         self._paint()
+
+    # Narrow enough that no word of any language fits, wide enough to be a real
+    # measurement rather than a placeholder.
+    MIN_LABEL = 24
+
+    def _on_frame(self, event: tk.Event) -> None:
+        """Re-wrap the label to the width this control was actually given.
+
+        The mark takes its width off the left and the rest is what the label has. A
+        `tk.Label` asked to wrap at one width and handed another keeps the first set
+        of breaks and clips the last word off, which is how a three column page cut
+        «Печатать в активное окно» to «Печатать в активное с…» while the page's own
+        arithmetic said there was room for it.
+
+        Below `MIN_LABEL` the width is left alone: that is a card squeezed to
+        nothing rather than a card being re-measured, and a `wraplength` of nine
+        pixels makes every label one character per line.
+        """
+        if event.widget is not self:
+            return
+        available = event.width - theme.px(CHECK_BOX) - theme.px(theme.SPACE)
+        if available < self.MIN_LABEL or abs(available - self._wraplength) <= 1:
+            return
+        self._wraplength = available
+        self._text.configure(wraplength=available)
 
     def _forget(self, _event=None) -> None:
         """Let go of the variable when this widget is destroyed.
@@ -487,16 +520,55 @@ class Choice(_Textual, tk.Frame):
             return self._value
         return str(self._variable.get()) if self._variable is not None else ""
 
+    @property
+    def is_radio(self) -> bool:
+        """Whether this is one of several options of which one is chosen."""
+        return self._kind == "radio"
+
+    @property
+    def variable(self) -> tk.Variable | None:
+        """The variable this control reads and writes, for a caller grouping them."""
+        return self._variable
+
+    @property
+    def is_marked(self) -> bool:
+        """Whether its mark is filled, which is what the user sees.
+
+        Asked from outside by `Panel.check_radios`: the variable a group shares
+        holds one value whatever the marks say, so a group that has painted two of
+        them is only visible by asking each of them.
+        """
+        return self._is_on()
+
     def set(self, value) -> None:
-        """Put the mark where `value` says, without firing the command."""
-        if self._kind == "radio":
-            self._value = str(value)
+        """Put the mark where `value` says, without firing the command.
+
+        The code a radio stands for is what it was built with and is never
+        rewritten: `set` moves the variable, and `_is_on` compares it against
+        that code. Assigning the value over `_value` here would make a radio
+        agree with whatever was last written into the variable, which is how two
+        of them end up marked at once.
+        """
         if self._variable is not None:
             self._variable.set(value)
 
+    def _is_on(self) -> bool:
+        """Whether this control's mark is filled.
+
+        A radio does not ask whether the variable is true - it asks whether the
+        variable holds **its own** code. Every code is a non-empty string, so
+        truthiness says yes to all of them at once and the language pair came up
+        with both ends marked. Only one of them is ever the value.
+        """
+        if self._variable is None:
+            return False
+        if self._kind == "radio":
+            return str(self._variable.get()) == self._value
+        return bool(self._variable.get())
+
     def _paint(self) -> None:
         p = self._palette
-        on = bool(self._variable.get()) if self._variable is not None else False
+        on = self._is_on()
         side = theme.px(CHECK_BOX)
         radius = theme.px(side // 2 if self._kind == "radio" else CHECK_RADIUS)
         fill = p.accent if on else p.surface
@@ -741,7 +813,21 @@ class Paragraph(_Textual, tk.Frame):
     right edge. Breaking the lines from the same measurement the height is
     computed from means the two cannot disagree, and means this widget's height
     is the height it will be rather than the height it hoped for.
+
+    `MIN_PIXELS` is the width below which a paragraph is not narrow but not laid
+    out. A window that has never been mapped reports a width of one pixel, and a
+    width of one pixel is a width every word fits in: the paragraph breaks to one
+    word per line, asks for three hundred lines, and the page that holds it grows
+    to four times the window. It was built inside a `Scroller`, and it is built
+    again on every change of theme, which is when the history tab was seen to
+    arrive as a column of single letters down the bottom of the page. The real
+    width arrives with the first `<Configure>` after the window is shown, and by
+    then the paragraph has been thrown away and built again at the right width.
     """
+
+    # Narrow enough that no word of any language fits, wide enough to be a real
+    # measurement rather than a placeholder.
+    MIN_PIXELS = 24
 
     def __init__(
         self, master: tk.Misc, *, palette: theme.Palette, text: str = "",
@@ -752,7 +838,7 @@ class Paragraph(_Textual, tk.Frame):
         self._body = text
         self._size = size
         self._font = theme.ui(size)
-        self._pixels = max(1, width)
+        self._pixels = max(self.MIN_PIXELS, width)
         self._lines: list[str] = []
         super().__init__(master, bg=bg or palette.surface, bd=0, highlightthickness=0)
         air = theme.leading(self._font, size, leading)
@@ -773,9 +859,12 @@ class Paragraph(_Textual, tk.Frame):
         Both the break points and the height follow the width, so a frame that is
         laid out twice at two widths has to be re-broken; one that is not does
         not, because rewriting the text on every `<Configure>` would put the
-        widget into a loop with its own geometry.
+        widget into a loop with its own geometry. A width too small to be a real
+        measurement is ignored outright — see `MIN_PIXELS`.
         """
-        if event.widget is not self or abs(event.width - self._pixels) <= 1:
+        if event.widget is not self or event.width < self.MIN_PIXELS:
+            return
+        if abs(event.width - self._pixels) <= 1:
             return
         self._pixels = event.width
         self._apply()
@@ -833,8 +922,28 @@ class Paragraph(_Textual, tk.Frame):
             self.pack_forget()
 
     def set_colour(self, colour: str) -> None:
-        """Recolour the prose, which is how a hint says ok or failed."""
+        """Repaint the prose, which is how a hint says ok or failed."""
         self._text.configure(fg=colour)
+
+    def set_background(self, colour: str) -> None:
+        """Repaint the frame and the text widget behind it.
+
+        The text widget carries its own `bg`, so a caller that recolours the
+        frame alone — `HistoryRow` on hover — leaves a band of the old colour
+        down the middle of the paragraph.
+        """
+        self.configure(bg=colour)
+        self._text.configure(bg=colour)
+
+    def text_widget(self) -> tk.Text:
+        """The inner text widget, for a caller that has to bind on it.
+
+        Tk does not deliver an event to an ancestor of the widget under the
+        pointer, so a row that highlights and copies on a double-click has to
+        bind on the text as well as on the frame around it. `CodeBox` hands out
+        its text widget for the same reason.
+        """
+        return self._text
 
     def configure(self, cnf=None, **kw):
         """Swallow `fg` before the mix-in sees it.
@@ -857,6 +966,122 @@ class Paragraph(_Textual, tk.Frame):
                 if not kw:
                     return None
         return super().configure(cnf, **kw)
+
+
+# The history tab.
+
+
+class HistoryRow(tk.Frame):
+    """One finished session in the history tab: when it was said, and what was said.
+
+    A frame, because nothing here is drawn: the stamp is a label, the text is a
+    `Paragraph` so a long record wraps at a real line height, and the only state
+    is the hover. What makes it a widget of its own is that a row is a thing you
+    take a copy of — `Choice` toggles a switch, `Button` acts the moment it is
+    pressed, and neither of those is "a line of text you might want".
+
+    The action is a double-click, and a single click does nothing at all. A click
+    that silently replaces the clipboard is the one surprise this feature must
+    not contain: the user is reaching for a record to paste and can be reaching
+    for the same record twice in a row.
+
+    The stamp carries the day for anything that is not from today. The list spans
+    days, so a bare time is a lie after midnight.
+    """
+
+    PADDING = 12
+    # The longest stamp there is, so every record's text starts on the same x.
+    STAMP_SAMPLE = "00.00 00:00:00"
+    STAMP_GAP = 8
+
+    def __init__(
+        self, master: tk.Misc, *, palette: theme.Palette, stamp: str, body: str,
+        command: Callable[[], None] | None = None, bg: str | None = None,
+        width: int = 0, stamp_width: int = 0,
+    ) -> None:
+        self._palette = palette
+        self._command = command
+        self._hover = False
+        self._rest = bg or palette.surface
+        super().__init__(
+            master, bg=self._rest, bd=0, highlightthickness=0, cursor="hand2",
+        )
+        pad = theme.px(self.PADDING)
+        self._font = theme.mono(TYPE_TINY)
+        # The stamp column is a frame of a fixed width rather than a label with a
+        # width: `-width` on a label counts characters, and a hundred of them is
+        # seven hundred pixels, which is how one column ate a whole row. On a
+        # frame the same option is a screen distance, which is what is meant here.
+        #
+        # The caller passes the width of the widest stamp it is about to render,
+        # because most rows carry a time and only the older ones carry a day, and
+        # a column sized for the longest sample would leave a hand's width of
+        # nothing between every stamp and its text.
+        column = tk.Frame(
+            self, width=stamp_width
+            or theme.measure(self._font, self.STAMP_SAMPLE) + theme.px(theme.SPACE_XS),
+            bg=self._rest, bd=0, highlightthickness=0,
+        )
+        column.pack(side="left", fill="y")
+        column.pack_propagate(False)
+        self._column = column
+        self._stamp = tk.Label(
+            column, text=stamp, bg=self._rest, fg=palette.text_subtle,
+            font=self._font, anchor="nw",
+        )
+        # `Paragraph` puts a line's air above its first line, which is what makes
+        # the prose breathe and is invisible when a paragraph stands alone. In a
+        # row it would leave the stamp a line above the text it belongs to, so
+        # the stamp is dropped by the same air — computed the same way, from the
+        # same two public calls, rather than a number that drifts from it.
+        air = theme.leading(theme.ui(TYPE_BODY), TYPE_BODY)
+        self._stamp.pack(side="left", anchor="n", pady=(air, 0),
+                         padx=(pad, theme.px(self.STAMP_GAP)))
+        self._body = Paragraph(
+            self, palette=palette, text=body, size=TYPE_BODY, colour=palette.text,
+            bg=self._rest, width=width,
+        )
+        self._body.pack(side="left", fill="both", expand=True, padx=(0, pad),
+                        pady=pad)
+        for part in (self._column, self._stamp, self._body, self._body.text_widget()):
+            part.bind("<Enter>", self._enter)
+            part.bind("<Leave>", self._leave)
+            part.bind("<Double-Button-1>", self._activate)
+        self.bind("<Enter>", self._enter)
+        self.bind("<Leave>", self._leave)
+        self.bind("<Double-Button-1>", self._activate)
+
+    def _enter(self, _event=None) -> None:
+        self._set_hover(True)
+
+    def _leave(self, _event=None) -> None:
+        self._set_hover(False)
+
+    def _set_hover(self, wanted: bool) -> None:
+        """Repaint only on a change of state.
+
+        The pointer crossing from the stamp to the text leaves one part and
+        enters another, and repainting on both would do the work twice for one
+        hover.
+        """
+        if wanted == self._hover:
+            return
+        self._hover = wanted
+        colour = self._palette.surface_hover if wanted else self._rest
+        self.configure(bg=colour)
+        self._column.configure(bg=colour)
+        self._stamp.configure(bg=colour)
+        self._body.set_background(colour)
+
+    def _activate(self, _event=None) -> str | None:
+        if self._command is None:
+            return None
+        self._command()
+        return "break"
+
+    def text(self) -> str:
+        """What was said, which is what a copy of this row hands over."""
+        return self._body.cget("text")
 
 
 # Tabs.
@@ -960,10 +1185,17 @@ class Tabs(tk.Frame):
     reaches into `panel._notebook.select(1)`, keeps working. A page is created
     with `parent=tabs.content`, because `place` cannot re-parent a widget the way
     `ttk.Notebook.add` does.
+
+    `on_select` is the notification `ttk.Notebook` gives away for free through
+    `<<NotebookTabSelected>>` and this widget has to hand over by hand: the
+    history tab paints itself from what is on disk, and it cannot know that until
+    it is looked at.
     """
 
-    def __init__(self, master: tk.Misc, *, palette: theme.Palette) -> None:
+    def __init__(self, master: tk.Misc, *, palette: theme.Palette,
+                 on_select: Callable[[int], None] | None = None) -> None:
         self._palette = palette
+        self._on_select = on_select
         self._pages: list[tk.Frame] = []
         self._labels: list[TabLabel] = []
         self._keys: list[str] = []
@@ -996,7 +1228,13 @@ class Tabs(tk.Frame):
         return {"text": self._labels[index].cget("text")}
 
     def select(self, index: int | tk.Frame) -> None:
-        """Bring one page forward, hiding the others."""
+        """Bring one page forward, hiding the others.
+
+        `on_select` is told the new index after the page is packed, so a page
+        that paints itself from the disk has a size to paint into by then. It
+        also fires on the first `add`, which is why a callback that reloads
+        anything has to put up with being called before the other pages exist.
+        """
         if isinstance(index, tk.Frame):
             index = self._pages.index(index)
         self._current = max(0, min(index, len(self._pages) - 1))
@@ -1007,6 +1245,14 @@ class Tabs(tk.Frame):
             else:
                 page.pack_forget()
                 self._labels[position].deselect()
+        if self._on_select is None:
+            return
+        try:
+            self._on_select(self._current)
+        except tk.TclError:
+            # A page that could not paint itself must not take the tab switch
+            # down with it: the other two tabs still work, and the log says why.
+            log.debug("a tab could not follow the selection", exc_info=True)
 
     @property
     def index(self) -> int:
@@ -1020,7 +1266,16 @@ class Tabs(tk.Frame):
         return self  # pragma: no cover - the strip is built in __init__
 
     def repaint_labels(self) -> None:
-        """Nothing to do: `tab(frame, text=...)` is what a language change calls."""
+        """Repaint the strip in the current language.
+
+        The keys are kept from `add`, so a language change is one call here
+        rather than a registry entry per label in `panel.py`: the labels are
+        built inside this widget and never handed out, and a label the panel
+        cannot reach is a label the panel cannot repaint.
+        """
+        for label, key in zip(self._labels, self._keys):
+            if key:
+                label.configure(text=text.t(key))
 
 
 # The transcript.
@@ -1236,6 +1491,17 @@ class Scroller(tk.Frame):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_canvas(self, event: tk.Event) -> None:
+        """Give the body the canvas's width, when the canvas has a real one.
+
+        A canvas in a window that has never been shown reports a width of one
+        pixel. Handing that to the body is what made every paragraph on the page
+        break one word per line while the panel sat in the tray, and the page grew
+        to a height nobody would ever scroll through. One pixel is not a width,
+        so it is not passed on; the real one arrives with the `<Configure>` that
+        comes with the map.
+        """
+        if event.width < 2:
+            return
         self.canvas.itemconfigure(self._window, width=event.width)
 
     def _scroll_by(self, what: str, amount: float = 0.0) -> None:
@@ -1263,14 +1529,164 @@ class Scroller(tk.Frame):
             widget.bind("<MouseWheel>", self._on_wheel)
         self._bind_below(self.body)
 
+    def bind_wheel_below(self, widget: tk.Misc) -> None:
+        """Bind the wheel over a subtree that was added after `bind_wheel`.
+
+        The settings page is built once and bound once. The history page fills
+        itself from the disk every time it is looked at, so its rows did not
+        exist when the wheel was bound, and a wheel over the text inside one of
+        them would scroll that record's three lines instead of the page.
+        """
+        widget.bind("<MouseWheel>", self._on_wheel)
+        self._bind_below(widget)
+
     def _bind_below(self, widget: tk.Misc) -> None:
-        for child in widget.winfo_children():
+        """Bind every descendant, all the way down.
+
+        A paragraph is a frame around a `Text`, and it is the `Text` that is
+        under the pointer; one level of binding reaches the frame and stops, so
+        the innermost widget of the deepest control on the page would keep
+        scrolling itself. An explicit stack rather than recursion, so a deep tree
+        cannot exhaust the stack and take the page with it — and no second walk
+        of the same subtree, which cost the history tab 139 bindings for 59
+        widgets on every rebuild, and grew with the depth of the tree rather than
+        with the number of widgets in it.
+        """
+        pending = list(widget.winfo_children())
+        while pending:
+            child = pending.pop()
             child.bind("<MouseWheel>", self._on_wheel)
-            self._bind_below(child)
+            pending.extend(child.winfo_children())
 
     def _on_wheel(self, event: tk.Event) -> str:
         self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
         return "break"
+
+
+# A transient card.
+
+# How long a toast is on screen. Long enough to be read at a glance, short enough
+# that two copies in a row do not pile up: each new one cancels the last, so a
+# second message replaces the first rather than queueing behind it.
+TOAST_MS = 1800
+# How far above the bottom edge of whatever it is shown over the toast sits.
+TOAST_INSET = 28
+
+
+class Toast(tk.Toplevel):
+    """A card that says what just happened and takes itself away again.
+
+    The panel has nowhere else to say it. The footer is the status of the engine,
+    the hint under a switch is the answer to that switch, and the history tab's
+    own line sits at the top of a list the reader has usually scrolled past - so a
+    double-click that copied a record looked like nothing at all had happened.
+
+    A `Toplevel` rather than a widget inside the panel, because the panel is
+    often in the tray when a copy is made, and a message drawn inside a window
+    nobody can see is a message nobody reads. The window is its own size and
+    drawn entirely from `theme`, so the card's plate is the whole window and
+    there is no frame of flat colour around it.
+    """
+
+    def __init__(self, master: tk.Misc, *, palette: theme.Palette) -> None:
+        super().__init__(master)
+        self._palette = palette
+        self._job: str | None = None
+        self.withdraw()
+        # No caption, no border, no taskbar button: this is a card that appears
+        # over another window for a moment, and anything the window manager adds
+        # would be a bar drawn round it.
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        # Before the first map, and again on every map below. A toast is shown
+        # over whatever the user is typing into, so a window that could take the
+        # focus would swallow the dictated words instead of handing them to the
+        # document; and `deiconify` resets the extended style, so dressing it once
+        # in __init__ is not enough — see theme.forbid_activation.
+        self.bind("<Map>", self._on_map)
+        theme.forbid_activation(self)
+        self.configure(bg=palette.bg)
+        self._card = Card(
+            self, palette=palette, padding=theme.SPACE_SM,
+            radius=theme.RADIUS_CONTROL,
+        )
+        self._card.pack(fill="both", expand=True)
+        self._label = body(
+            self._card.inner, palette=palette, size=TYPE_BODY, bg=palette.surface
+        )
+        self._label.pack(anchor="center")
+        self._label.configure(anchor="center")
+
+    def show(self, message: str, *, error: bool = False) -> None:
+        """Put `message` on screen, replacing whatever was there.
+
+        Repainted rather than rebuilt, so a second toast in the same place costs
+        one `configure` and no new widgets, and the window does not flicker in a
+        different place than the last one.
+        """
+        self._label.configure(
+            text=message,
+            fg=self._palette.danger if error else self._palette.text,
+        )
+        self.update_idletasks()
+        self._place()
+        self.deiconify()
+        # `deiconify` maps the window and resets the extended style, and `<Map>`
+        # arrives on a later loop iteration, so the style is put back here as
+        # well as from `_on_map`. Belt and braces is the whole point: the one
+        # path that must never be activatable is a window drawn over the user's
+        # document while they are dictating into it.
+        theme.forbid_activation(self)
+        self.lift()
+        if self._job is not None:
+            try:
+                self.after_cancel(self._job)
+            except tk.TclError:
+                log.debug("the toast timer is already gone", exc_info=True)
+        self._job = self.after(TOAST_MS, self.hide)
+
+    def hide(self) -> None:
+        """Take the card away. Safe to call when it is not showing."""
+        self._job = None
+        try:
+            self.withdraw()
+        except tk.TclError:
+            log.debug("the toast is already gone", exc_info=True)
+
+    def _on_map(self, event=None) -> None:
+        """Keep the toast out of the focus every time it comes back on screen."""
+        if event is not None and event.widget is not self:
+            return
+        theme.forbid_activation(self)
+
+    def _place(self) -> None:
+        """Over the bottom of the panel if it is on screen, else of the work area.
+
+        The panel is the anchor when there is one, because a message about the
+        panel belongs over the panel; when the panel is in the tray there is
+        nothing to point at, so it goes to the bottom of the work area, which is
+        where a message from an app that lives in the notification area belongs.
+        """
+        self.update_idletasks()
+        width = max(self._card.winfo_reqwidth(), 1)
+        height = max(self._card.winfo_reqheight(), 1)
+        master = self.master
+        if master is not None and master.winfo_ismapped():
+            x = master.winfo_rootx() + (master.winfo_width() - width) // 2
+            y = master.winfo_rooty() + master.winfo_height() - height - theme.px(TOAST_INSET)
+        else:
+            x = (self.winfo_screenwidth() - width) // 2
+            y = self.winfo_screenheight() - height - theme.px(TOAST_INSET)
+        self.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+    def destroy(self) -> None:
+        if self._job is not None:
+            try:
+                self.after_cancel(self._job)
+            except tk.TclError:
+                log.debug("the toast timer is already gone", exc_info=True)
+            self._job = None
+        super().destroy()
 
 
 # Small text helpers, so a label's font and colour are never written twice.

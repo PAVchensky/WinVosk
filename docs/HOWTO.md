@@ -32,8 +32,10 @@ Start it with `WinVosk.bat`, or let Windows start it on login.
 | Hide the panel | tray → **Hide the panel**, or just close the window — it goes to the tray |
 | Change the hotkey | panel → **Settings** tab, see [Settings](#settings) |
 | Record on press instead of hold | panel → **Settings** → **Toggle recording** |
+| Choose the microphone | panel → **Settings** → **Recording device**, see [Recording device](#recording-device) |
 | Type or not, clipboard, autostart | panel → **Settings** tab, see [Where the text goes](#where-the-text-goes) |
 | Light or dark | panel → **Settings** → **Dark theme**, see [Appearance](#appearance) |
+| Resize the panel | drag any edge or corner of the window |
 | Teach it your own words | put them in `phrases.txt`, see [Custom vocabulary](#custom-vocabulary) |
 | Quit | tray menu → **Quit** |
 
@@ -41,6 +43,16 @@ Recording runs for exactly as long as the keys are held, which is the shipped
 default: release and the session closes, the text is written to
 `logs\YYYY-MM-DD.txt`, and the caret is left where the last word landed. Hold
 again for the next sentence.
+
+**The microphone is open only while a recording runs.** `DictationEngine._load`
+loads the model and resolves the device; `_open_stream` is called from `_begin`,
+which runs when a recording starts, and `_close_stream` from `_finish`, which runs
+when it stops. It used to be the other way round — the stream was created and
+started with the model and closed only when the process exited — and the effect
+was that Windows listed WinVosk as using the microphone for as long as the app ran,
+which is the one thing a user cannot account for and every other program that
+wants the device is refused. The model stays loaded throughout, because that is
+the expensive part, and opening a stream costs tens of milliseconds.
 
 **Toggle recording** in the settings tab replaces that with a toggle: one
 press starts, the next one stops. See [Recording mode](#recording-mode) for
@@ -201,14 +213,29 @@ the panel before you continue.
 `TrayIcon.run()` calls `pystray.Icon.run_detached()`, which only starts a thread;
 pystray registers a window class, creates two hidden windows, and only then calls
 `Shell_NotifyIcon(NIM_ADD)` from a second thread of its own. `run()` therefore
-polls `TrayIcon.visible` for up to `tray.TRAY_READY_TIMEOUT` — a second on this
-machine — and logs `tray icon did not appear` as a **warning** if it never
-arrives. It is a warning and not a fatal error on purpose: pystray answers
+polls `TrayIcon.visible` for up to `tray.TRAY_READY_TIMEOUT` — five seconds —
+and logs `tray icon did not appear` as a **warning** if it has not arrived.
+It is a warning and not a fatal error on purpose: pystray answers
 `WM_TASKBARCREATED`, so an icon lost to an Explorer restart comes back by itself.
 The reason this is worth a wait at all is that a missing icon is otherwise
 perfectly silent — the panel lives in the tray, so there is no way in — and
 pystray reports its own failures to a logger that has no handler and, in a
 `console=False` bundle, no `stderr` to fall back on.
+
+**A refused icon is waited for, not forced.** `WM_TASKBARCREATED` covers an
+Explorer that restarts under a live icon; it does not cover a shell that was not
+ready when the icon first asked, and pystray never retries that first refusal.
+Measured on the machine this was found on: two starts in a row logged the warning
+and a third took the icon seconds later. So after the warning, `tray-watch`
+watches `visible` for another minute on a thread of its own and logs either
+`tray icon appeared late` or an **error** saying the panel is unreachable. It
+watches rather than asking again on purpose: the only way to make pystray issue
+a second `NIM_ADD` is `visible = False` then `True`, and pystray sets `visible`
+from its own side of that call without ever learning whether the shell took the
+icon. A forced re-add would therefore report success on its first attempt whether
+or not the notification area has the icon, which is the one thing the line exists
+to say. The watcher is a daemon thread and `TrayIcon.stop()` ends it, so it never
+outlives the app.
 
 **The panel starts unmapped and stays that way.** `Panel.__init__` calls
 `withdraw()` on the root before a single widget is built, so the window is never
@@ -224,6 +251,24 @@ the panel is in the tray; `--check-bundle` asserts exactly that. And a modal
 dialog whose parent is withdrawn comes up behind whatever else is in front, or
 not at all, so `show_words_report` passes `parent` only while the panel is up —
 the own-word check is most often run from the tray.
+
+**The window is resizable, and its title is `WinVosk` and the version.** The
+title lost the device suffix it used to carry: the name Windows gives an input is
+long, differs per machine and changes with whatever the sound mapper feels like
+doing, so a title built from it was a different string on every start, and a bug
+report that quotes the title could not be matched to a build. The device is on the
+settings tab, where a choice is made, and in `logs\app.log`, where a fault is
+looked for.
+
+`Panel._place` asks for `WIDTH × HEIGHT` scaled by the display ratio and sets
+`minsize` to `MIN_WIDTH × MIN_HEIGHT` — 560 × 460 against the 720 × 700 it is drawn
+at. It used to set `minsize` to the design size, which is the number the geometry
+had already asked for, and a minimum equal to the current size is a window that
+cannot be resized at all: not by the mouse and not by the system. Everything
+width-dependent on the page is measured at `<Configure>` rather than from the
+`WIDTH` constant — `Paragraph` re-breaks its lines, and the grid's `uniform` keeps
+the two columns equal — so the constants are the size the layout was drawn at and
+the starting geometry, not the size it insists on.
 
 ## Layout
 
@@ -243,7 +288,7 @@ Vosk\                             the checkout folder, the project itself is Win
 │       ├── hotkey.py          global hotkey via a low level keyboard hook
 │       ├── keystrokes.py      text typed with KEYEVENTF_UNICODE keystrokes
 │       ├── vocabulary.py      phrase file loader and vocabulary check
-│       ├── panel.py           always-on-top Tk panel, two tabs
+│       ├── panel.py           always-on-top Tk panel, three tabs
     │       ├── theme.py           palettes, spacing and type scales, window dressing
     │       ├── widgets.py         the panel's own widgets: cards, buttons, switches
     │       ├── overlay.py         recording chip: eleven bars over an elapsed clock
@@ -252,7 +297,7 @@ Vosk\                             the checkout folder, the project itself is Win
 │       ├── text.py            every user visible string, ru and en
 │       ├── tray.py            pystray icon and menu
 │       ├── autostart.py       HKCU\...\Run entry
-│       ├── diary.py           dated history under logs\
+│       ├── diary.py           dated history under logs\, and the reader for it
 │       └── file_transcribe.py fallback: media file to text, plus --self-test
 ├── tools\
 │   ├── cleanup.py            kills leftover targets and the app
@@ -263,6 +308,7 @@ Vosk\                             the checkout folder, the project itself is Win
 │   ├── hold_probe.py         push to talk behaviour of the hotkey
 │   ├── typing_probe.py       end to end typing assertion
 │   ├── settings_probe.py     headless check of settings.json and the capture
+│   ├── history_probe.py      headless check of the history reader and the gate
 │   ├── correct_probe.py      headless check of the own-word correction rules
 │   ├── lang_probe.py        headless check of the message table and the language
 │   ├── build_exe.py          builds dist\WinVosk\, see below
@@ -289,7 +335,8 @@ its `base dir` line, and that is the only place the current location matters.
 
 `settings.json` is the one file here that is machine state rather than part of
 the checkout: it is ignored by git and can be deleted freely, which costs the
-default hotkey and the default states of the three switches, nothing else.
+default hotkey, the default states of the six switches, the theme and the
+language, nothing else.
 
 ## Model
 
@@ -518,6 +565,9 @@ have to be out of the way before a probe can assert on focus.
 # settings file and hotkey capture: no GUI, no microphone, no model load
 .\.venv\Scripts\python.exe .\tools\settings_probe.py
 
+# the history reader and the switch that gates it: no GUI, no microphone, no model
+.\.venv\Scripts\python.exe .\tools\history_probe.py
+
 # own-word correction rules: no model, no microphone, no GUI
 .\.venv\Scripts\python.exe .\tools\correct_probe.py
 
@@ -536,20 +586,37 @@ drives the real `Typer` with a sequence of recogniser updates including a
 revision, and prints `VERDICT: PASS` when the text was typed at the caret, the
 correction was applied with Backspace and the original content survived.
 
-Three probes are pure logic: they need no keyboard, no microphone, no model and
-no GUI, and they run unattended in a fraction of a second. `settings_probe.py`,
-`correct_probe.py` and `lang_probe.py` print `VERDICT: PASS` or `VERDICT: FAIL`.
+Four probes are pure logic: they need no keyboard, no microphone, no model and
+no GUI, and they run unattended in a fraction of a second.
+`settings_probe.py`, `history_probe.py`, `correct_probe.py` and `lang_probe.py`
+print `VERDICT: PASS` or `VERDICT: FAIL`.
 
 `settings_probe.py` checks the hotkey plumbing and the file: that every key the
 capture can be given has a name and that the name round trips through the
 parser, the capture rules (a bare main key is refused, `Escape` cancels, a
 modifier alone is not a combination), the `settings.json` fallbacks for a missing,
-malformed, wrongly shaped or unusable file, a byte order mark, the three switches
-and their fallbacks for a value that is not `true` or `false`, the atomic write
-leaving no temp file behind, that a switch write never disturbs the hotkey list
-beside it, and that leaving the capture hands the keyboard back. Its filesystem
-cases point the module at a temporary directory, so it never touches the real
-`settings.json`.
+malformed, wrongly shaped or unusable file, a byte order mark, the six switches
+and their fallbacks for a value that is not `true` or `false`, the recording device
+key — a name, the system default as an explicit `null`, a padded name as pasted out
+of the Windows dialog, and a number or a list refused rather than stored — the atomic
+write leaving no temp file behind, that a switch write never disturbs the hotkey list
+beside it, and that leaving the capture hands the keyboard back. Its last case
+watches the log file rather than the switch: what lands in it with **Write the log
+file** on, what does not with it off, and that the root level and another handler
+are left alone — the switch is a property of the file, not of the process. Its
+filesystem cases point the module at a temporary directory, so it never touches
+the real `settings.json`.
+
+`history_probe.py` covers the reader and the gate: three days of records read
+back newest first, a hand edited line with no timestamp skipped, a byte order
+mark costing nothing, a line with no trailing newline — a write still in progress —
+still counted, `app.log`, `app.log.1` and `report.txt` never read as history, the
+limit stopping the read, `recent(0)` and `recent(-1)` returning nothing rather than
+everything, a missing `logs\` being no history and not an error, a record in
+Cyrillic surviving the round trip, and `append` writing or not writing according to
+**Keep the history**. It points `config.LOGS_DIR` and `settings.SETTINGS_FILE` at
+a temporary directory and touches neither the real folder nor the real settings.
+Run it after any change to `diary.py` or to the history part of `run.py`.
 
 `correct_probe.py` covers the own-word correction: what is heard becoming what
 you wrote, the cutoff boundary in both directions, inflections left alone, the
@@ -566,12 +633,23 @@ what is answered.
 
 ## Settings
 
-The panel has two tabs. **Dictation** is the transcription itself, unchanged.
+The panel has three tabs. **Dictation** is the transcription itself, unchanged.
 **Settings** holds the combination that starts a recording, three switches — where
 the text goes, whether it also lands in the clipboard, whether your own words are
-corrected — whether Windows starts the app, the light or dark theme, and the
-language. Everything on that tab is written at once, on the click, and is in force
+corrected — the recording device, whether Windows starts the app, the light or dark
+theme, the language, and the two switches that say how much is written to disk.
+**History** lists the last ten finished sessions and copies one to the clipboard.
+Everything on the settings tab is written at once, on the click, and is in force
 immediately.
+
+The settings tab is laid out as one card across the top and a **grid** of six below
+it, three rows of two, rather than as two packed columns. That is a change of
+arrangement and not of content, and the reason is measurable: packed, each column
+was as tall as its own content, so one ended in the middle of the page, the other
+ran past it, and the page had three different bottoms to line up. In a grid a row
+is as tall as its tallest cell and both cards are stretched to that height, with
+their own content at the top. `grid_columnconfigure(..., uniform="settings")` is
+what makes the two columns the same width rather than merely the same weight.
 
 ### Where the text goes
 
@@ -618,6 +696,31 @@ the switches: a failed write leaves the previous value on the disk, and a failed
 registry write is reported with the checkbox restored to what the Run key really
 holds. The switch is never left showing something that is not in effect.
 
+### Recording device
+
+**Recording device** lists everything `recognizer.input_devices()` can see, with the
+one a host API calls default marked, and the first entry — **System default** — is
+the app's own automatic choice. Choosing one of the others puts that **name** into
+`settings.json` as `input_device` and hands it to `DictationEngine.replace_device`,
+which takes effect from the next recording: a recording already running keeps the
+device it started with, because swapping the microphone out from under a half-heard
+sentence is worse than that one sentence taking the old one.
+
+Two things about this card are unlike the others on the page, and both are
+consequences of what it lists. It is filled from outside — `App` asks
+`recognizer` and passes `(name, is_default)` pairs into `Panel.set_devices` — so
+`panel.py` never imports `sounddevice`, which `--check-bundle` needs on a machine
+with no audio hardware at all. And its labels are the names Windows gives the
+hardware, so they do not translate: a change of language rebuilds this card rather
+than repainting it, and `text.LANGUAGES` endonyms cannot help.
+
+A device that cannot be opened — a headset asleep in the tray, a device Windows has
+renumbered, another program holding the handle — is an ordinary state rather than
+an exception. `_open_stream` catches it, logs it, tells the panel through a
+`device_error` event, clears the recording state so the panel is not left waiting
+for words that are never coming, and the worker thread carries on to the next
+recording.
+
 ### Appearance
 
 **Dark theme** repaints the panel, the recording chip and the tray icon in the
@@ -632,10 +735,18 @@ rather than accepted as anything: an unknown name falls back to
 ### Language
 
 **Russian** and **English**, chosen with two buttons, and applied at once: the
-panel, the tray menu, the notifications, the capture reasons and the window title
-all repaint in the new language without a restart and without losing anything —
-the text in the box, the recording state and the switch positions stay exactly
-as they were.
+panel, the tray menu, the notifications and the capture reasons all repaint in the
+new language without a restart and without losing anything — the text in the box,
+the recording state and the switch positions stay exactly as they were.
+
+The two are one radio group over a `StringVar` holding the code, and the mark on
+each button is painted from whether the variable holds **that button's** code.
+Painting it from whether the variable is simply true marks both of them at once,
+because `"en"` and `"ru"` are both non-empty strings — which is how this pair came
+up with both ends filled in and neither of them chosen. Nothing else could see it:
+the variable holds exactly one value whatever the marks say, so the panel worked
+and looked wrong. `Panel.check_radios` walks the built panel and asserts that one
+and only one option in each group is marked, and `--check-bundle` runs it.
 
 The choice is remembered in `settings.json`, so it survives a restart, and the
 language you pick is also the one `--diagnose`, `--autostart` and `--vocab-check`
@@ -648,6 +759,130 @@ Russian — never an untranslated panel.
 Two things the language does **not** cover, and both are deliberate: your own
 word list in `phrases.txt` and the diary, because those are your data and your
 language, not the interface's. The `—` and `·` in the footer stay as they are.
+
+### Records and the log
+
+The **Records** card is two switches that answer one question — how much of this
+machine the app leaves a trace on — and they are the only settings whose effect is
+outside the window.
+
+**Keep the history** (`write_history`, on) governs `diary.append`, and it is
+checked there rather than at the call site: one gate the next caller cannot forget
+is worth more than a `diary` module that stays free of `settings`, and the import
+is legal because nothing in `settings` imports `diary`. It reads the switch from
+the disk for every session, so an edit to `settings.json` takes effect on the next
+sentence. Off, `append` returns `False` and logs one `INFO` line; nothing already
+written is touched, which is why the history tab keeps showing the old records and
+says that new ones are not being saved.
+
+**Write the log file** (`write_log`, on) is a level on the file, not on the
+process. `setup_logging` attaches the rotating handler and levels **it**:
+`logging.INFO` with the switch on, `logging.WARNING` with it off, while the root
+logger stays at `INFO` either way. That split is the whole point of the switch. A
+windowless build has no console, so `logs\app.log` is the only diagnostic there is
+and the file cannot stop being written; but the routine lines are what make it
+grow, and the lines that matter when something has gone wrong are the ones a fault
+report needs. Filtering in the handler rather than at the root also means
+`--diagnose` and the headless probes keep logging at `INFO` whatever the stored
+value is — they are not the file.
+
+`config.set_log_verbose` re-levels the handlers of a process that is already
+running, which is how the switch takes effect without a restart. It touches only
+the `RotatingFileHandler` instances, and returns `False` when there is none: a
+console flag that never called `setup_logging` has no file to re-level, and
+`App._set_logging` says so rather than leaving a switch that appears to do
+nothing. `settings_probe.py` case 11 watches all of this on a real handler in a
+temporary file, including that the root level and an unrelated handler are left
+alone.
+
+The window itself changes by 2 MB × 3: nothing else about the file does.
+
+### The history tab
+
+The third tab, after **Dictation** and **Settings**, and always last — it is the
+one tab that is read rather than acted in, and the order is the constant
+`panel.HISTORY_TAB` rather than a number typed twice.
+
+`diary.recent(limit)` reads the dated files back. The rules are all ways the naive
+version breaks on real files:
+
+- only names matching `^\d{4}-\d{2}-\d{2}\.txt$` are read. `logs\` also holds
+  `app.log`, its rotated copies and `report.txt`, and a `*.txt` glob would read the
+  last two as if they were somebody talking
+- files newest first — the names are ISO dates, so sorting by name is sorting by
+  day — and lines last first within each, so the list comes out in the order it is
+  displayed with no reversal at the end
+- reading stops at the limit. A diary with a year of records must not be read in
+  full to answer a question about ten of them, which is what `HISTORY_RECENT` is for
+- a line with no trailing newline is a write in progress and is still a record.
+  Refusing to show it would hide the newest thing that was said
+- a line that is not `[HH:MM:SS] text`, a file that does not decode and a file
+  that cannot be read each cost that one line or that one file, at `WARNING`, and
+  the rest of the list stands. `utf-8-sig` and `errors="replace"` because the file
+  is the app's own but has outlived several editors
+- no `theme` and no `tkinter` anywhere in `diary`: the reader is plain text in and
+  plain objects out, because the headless probes import it
+
+The tab is filled at build time, again whenever it is selected — `Tabs` hands the
+new index to `on_select`, which is the notification `ttk.Notebook` gives away for
+free through `<<NotebookTabSelected>>` — and again from `App._on_stop` after a
+successful `append`. That last one is a direct call rather than a command: `_pump`
+is already on the Tk thread, so a queue round-trip would show the new record a
+frame later for nothing. A theme change rebuilds the rows, because the old ones
+were painted in the palette the rebuild threw away.
+
+Three of those four fills find nothing new — the panel had a working list on
+screen and threw away ten rows, each a frame, a paragraph and a text widget of its
+own, to build the same ten again. `Panel.reload_history` therefore compares the
+entries it is about to show with the ones it last showed (`_history_shown`) and
+returns early. `force=True` exists for the one caller that has to redraw the same
+list for another reason: `set_history_writing` moves the note under it, and nothing
+in the diary changed. `_build` clears the cache, because it has just made a new
+empty rows frame and the cache would otherwise say the list on screen is right.
+
+**A `Scroller` in a window that has never been shown is one pixel wide, and a
+paragraph given one pixel breaks one word per line.** `Scroller._on_canvas` copies
+the canvas width into the body frame, and the width of an unmapped window is 1 —
+which is what the history tab used to be built at, since the panel lives in the
+tray. Every record came out as a column of single letters down the page, the
+`history_off_note` under it was 200 px tall, and the whole page was 2844 px in a
+654 px viewport. Two guards, both about width rather than about history:
+`_on_canvas` ignores a canvas narrower than 2 px, and `Paragraph._on_frame`
+ignores a frame narrower than `MIN_PIXELS` (24), because below that no word of any
+language fits and the paragraph is not narrow, it is not laid out. The real width
+arrives with the `<Configure>` that comes with the map. Measured after the fix:
+741 px of ten records in the same 654 px page.
+
+`Scroller._bind_below` walks a subtree binding `<MouseWheel>` on everything in it,
+because a `Text` handles the wheel itself and would scroll its own three lines
+instead of the page. It walked each subtree twice — the `while` loop pushed a
+child's children onto the stack *and* recursed into the child, which walked them
+again — so a history page took 139 bindings for 59 widgets and the cost grew with
+the depth of the tree rather than with the number of widgets in it. The recursion
+is gone; it was never what made the binding reach the innermost widget.
+
+Rows are `widgets.HistoryRow`: a stamp and a wrapped `Paragraph`, hover on
+`surface_hover`, and a **double-click** to copy. Double-click and not single-click
+because a click that silently replaces the clipboard is the one surprise this
+feature must not contain — the user is reaching for a record to paste, and may
+reach for the same record twice. The copy itself is `App._copy_history`, which
+calls the same `keystrokes.copy_to_clipboard` the dictation tab uses: copying text
+out is one operation with one owner, and the clipboard is not somewhere this app
+gets to be clever. The stamp carries `DD.MM` for anything that is not from today,
+because the list spans days and a bare time is a lie after midnight.
+
+**A copy says so three ways**, and had to: the line at the top of the tab, a tray
+balloon, and a `widgets.Toast` over the panel. The line is at the top of a list the
+reader has usually scrolled down, and the tray balloon is the one notification
+Windows has taught everyone to dismiss without reading — a double-click two thirds
+of the way down the page looked like nothing had happened at all. The toast is a
+`Toplevel` rather than a widget inside the panel because the panel is often in the
+tray when a copy is made: it is anchored over the panel when the panel is mapped
+and over the work area when it is not, and it is thrown away and rebuilt on a
+change of theme, being drawn entirely from the palette.
+
+Nothing is edited, deleted, searched or copied in bulk. It is a list of what was
+said, and it is read-only.
 
 ### Dictation hotkey
 
@@ -683,7 +918,7 @@ combination, and the field, the footer and the tray header show it alone.
 
 ### Where the settings are stored
 
-In `settings.json` in the project root, seven keys:
+In `settings.json` in the project root, ten keys:
 
 ```json
 {
@@ -694,10 +929,23 @@ In `settings.json` in the project root, seven keys:
   "copy_to_clipboard": false,
   "correct_words": true,
   "toggle_recording": false,
+  "write_log": true,
+  "write_history": true,
   "language": "en",
-  "theme": "light"
+  "theme": "light",
+  "input_device": null
 }
 ```
+
+`input_device` is `null` for the system default and otherwise the **name** of a
+recording device. A name, not an index: a PortAudio index is a position in a list
+Windows builds per machine, per host API and per boot, so a stored index is a
+pointer at whatever happens to sit in that slot today — which is how a saved
+microphone becomes a different one with nothing to say so. A name that no longer
+resolves falls back to the automatic choice, `input_device` warns in the log, and
+the switch in the panel goes back to that rather than marking a device that is not
+there. The key stays in the file as `null` rather than being removed, because
+`null` is an answer and an absent key is not.
 
 It is machine state rather than part of the checkout: it is listed in
 `.gitignore` and can be deleted freely, which costs the default hotkey and the
@@ -739,10 +987,14 @@ Everything else is a constant in `src\winvosk\config.py`:
 | --- | --- |
 | `HOTKEYS` | the shipped default combinations, `("win+ctrl+right", "alt+win")`; `settings.json` overrides them |
 | `MODEL_NAME` | preferred model directory |
-| `MIC_DEVICE` | PortAudio input index, `None` for the system default |
+| `MIC_DEVICE` | recording device **name**, overriding the choice in `settings.json`; `None` for that choice |
 | `LIVE_TYPE_DEFAULT` | initial state of **Печатать в активное окно**, `True` |
 | `CLIPBOARD_DEFAULT` | initial state of **Copy to the clipboard right away**, `False` |
 | `TOGGLE_DEFAULT` | initial state of **Toggle recording**, `False` |
+| `LOG_WRITE_DEFAULT` | initial state of **Write the log file**, `True` |
+| `HISTORY_WRITE_DEFAULT` | initial state of **Keep the history**, `True` |
+| `HISTORY_RECENT` | how many records the history tab shows, `10` |
+| `LOG_MAX_BYTES`, `LOG_BACKUPS` | the log file rotates at 2 MB and keeps three |
 | `TYPE_DELAY` | pause after each revision, in seconds |
 | `MAX_SESSION_SECONDS` | ceiling on one session; rare in push to talk, load-bearing in toggle |
 | PHRASES_FILE | the own-word list: `--vocab-check` and the correction pass |
@@ -946,6 +1198,24 @@ Backspace and retyped. Without that the screen would show duplicated and
 half-corrected words. After a finished utterance the prefix is reset, so the
 next fragment is typed after what is already there.
 
+The separating space is typed once, when an utterance is finished, and not
+before. A fragment carries no trailing space, because a word the model is still
+extending would then have a space in the middle of it, and the next update would
+have to erase that space again — a Backspace per grown word, for nothing. Over
+the sentence «полный список ии браузерных нейросетей» arriving word by word,
+that is 2 Backspaces instead of 0; one letter at a time, 24 instead of 12. The
+text on screen is identical either way, and so is the number of revisions the
+target application's undo stack sees.
+
+That is worth more than the tidiness. A Backspace is the only keystroke here
+that is **not** sent as `KEYEVENTF_UNICODE`: it goes out as a real `VK_BACK`,
+so it is the one event on the chain that a keyboard hook can act on by layout.
+With a layout switcher such as Punto Switcher running, a swallowed Backspace
+leaves the space standing where the word grew — «ии» reaches the screen as
+«и и» while the transcript itself stays correct. `KEYEVENTF_UNICODE` characters
+cannot be remapped by a layout, but they can still be swallowed, so no insertion
+method is proof against a third party hook; fewer Backspaces is fewer chances.
+
 Two guard rails:
 
 - If the foreground window belongs to this app, nothing is typed and the
@@ -1020,7 +1290,8 @@ got through:
   bigger model into `models\` for that.
 - Each correction costs a Backspace per changed character, so the target
   application's undo stack sees the revisions. Raise `TYPE_DELAY` if an
-  application cannot keep up.
+  application cannot keep up. Only a genuine rewrite costs one now: a word the
+  model took back, not the space between words.
 - The bars of the recording chip are an animation, not a level meter. The level
   is gated into sound or silence, and below the gate every bar settles onto the
   same small height, so a pause in speech and a silent microphone look alike.

@@ -223,8 +223,36 @@ class Typer:
         For a finished utterance the text is diffed against the partials that
         were typed for it, and the prefix is reset afterwards so the next
         utterance is typed after what is already on screen.
+
+        The separating space belongs to `boundary` and to nothing else. Adding
+        it to every fragment put a space inside any word the model went on to
+        extend, so every such extension had to erase that space again before
+        typing the rest of the word. On the sentence from the bug report,
+        arriving the way a recogniser sends it, word by word:
+
+            before   'полный '  'список '  'ии '  'браузер '
+                     then Backspace x1, because 'браузер' became
+                     'браузерных' and the fragment's trailing space was
+                     standing in the middle of it
+                     then Backspace x1 again for 'ней' -> 'нейросетей'
+
+            after    'полный'  ' список'  ' ии'  ' браузер'
+                     then no Backspace at all: 2 down to 0, and the screen
+                     ends on exactly the same text
+
+        One letter at a time, where the model revises nearly every fragment, is
+        24 Backspaces down to 12 on «полный список». What is left is a genuine
+        rewrite, where the model took a word back, which no rule can avoid.
+
+        That matters beyond tidiness. A Backspace is the one keystroke here that
+        is not sent as `KEYEVENTF_UNICODE`: it goes out as a real `VK_BACK`, so
+        it is the one event on the chain a keyboard hook can act on by layout.
+        A keyboard layout switcher that swallows it leaves the space standing
+        where the word grew, which is how `ии` turns into `и и` on screen while
+        the transcript stays correct. Fewer Backspaces is fewer chances for that.
         """
-        wanted = f"{text.strip()} " if text.strip() else ""
+        core = text.strip()
+        wanted = f"{core} " if boundary and core else core
         if not foreign_in_front():
             if wanted:
                 log.info("own window is in front, fragment held back")
@@ -238,6 +266,16 @@ class Typer:
                 common += 1
             to_erase = len(self._printed) - common
             tail = wanted[common:]
+            # What was on the screen, what it should read, and what moved. The
+            # counts alone cannot explain a bug report: a line that came out as
+            # gibberish is either a mangled `tail` or a swallowed Backspace, and
+            # only the text says which. An erase that reaches back to the first
+            # character means the model rewrote the whole utterance, which is the
+            # widest window we ever hand a keyboard hook, so it is worth seeing.
+            log.info(
+                "text %r was %r: erased %d, typed %r",
+                wanted, self._printed, to_erase, tail,
+            )
             if to_erase:
                 send_backspaces(to_erase)
                 self.erased += to_erase

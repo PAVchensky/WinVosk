@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import threading
 import time
 from collections.abc import Callable
 
@@ -21,6 +22,21 @@ log = logging.getLogger(__name__)
 # without turning a slow tray into a hang.
 TRAY_READY_TIMEOUT = 5.0
 TRAY_POLL_INTERVAL = 0.05
+
+# What to do when that wait runs out. The first `Shell_NotifyIcon` is refused
+# while the shell is still coming up, and pystray only re-adds on
+# `WM_TASKBARCREATED` — that is an Explorer that restarted, not a shell that was
+# never ready, so nothing upstream retries the first refusal. A dead tray is the
+# one failure that leaves the panel unreachable, because the tray is the only
+# way in. Measured on the machine this was found on: two starts in a row were
+# refused the icon and a third took it seconds later, which is a shell being
+# slow and not a shell that refuses.
+#
+# The retry runs on a thread of its own rather than on the startup path. Waiting
+# a minute for the icon with the panel's own thread blocked would be a worse
+# failure than a missing icon, and the hotkey works either way.
+TRAY_RETRY_INTERVAL = 0.5
+TRAY_RETRY_SECONDS = 60.0
 
 # Drawn four times the requested size and folded down with BOX, the same rule the
 # chip's plate and every card in the panel follow: an average of each block is
@@ -123,6 +139,7 @@ class TrayIcon:
         self._is_toggle = is_toggle
         self._hotkey_label = config.hotkey_label() if hotkey_label is None else hotkey_label
         self._palette = palette
+        self._stopped = False
         self._recording_image = make_icon(True, palette=palette)
         self._idle_image = make_icon(False, palette=palette)
         self._icon = pystray.Icon(
@@ -204,24 +221,59 @@ class TrayIcon:
         way in at all — which is why it is waited for and logged rather than
         assumed.
 
-        A missing icon is a warning, not a fatal error. pystray answers
-        `WM_TASKBARCREATED`, so an icon lost to an Explorer restart comes back on
-        its own, and killing the app over it would turn a transient into an
-        outage.
+        A missing icon is a warning, not a fatal error, and not the end of it
+        either: `_keep_asking` keeps watching in the background, because the
+        alternative is an app with no way into its own panel. pystray answers
+        `WM_TASKBARCREATED` for an Explorer that restarts under a live icon; this
+        covers a setup thread that simply has not got there yet.
         """
         self._icon.run_detached()
-        deadline = time.monotonic() + TRAY_READY_TIMEOUT
+        if self._await_visible(TRAY_READY_TIMEOUT):
+            log.info("tray icon started")
+            return True
+        log.warning(
+            "tray icon did not appear within %.1fs: the panel cannot be reached "
+            "from the tray yet. Still watching for it in the background for "
+            "%.0fs.", TRAY_READY_TIMEOUT, TRAY_RETRY_SECONDS,
+        )
+        threading.Thread(
+            target=self._keep_asking, name="tray-watch", daemon=True
+        ).start()
+        return False
+
+    def _await_visible(self, seconds: float) -> bool:
+        deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             if self.visible:
-                log.info("tray icon started")
                 return True
             time.sleep(TRAY_POLL_INTERVAL)
-        log.warning(
-            "tray icon did not appear within %.1fs: Shell_NotifyIcon never "
-            "accepted it, so the panel cannot be reached from the tray",
-            TRAY_READY_TIMEOUT,
-        )
         return False
+
+    def _keep_asking(self) -> None:
+        """Watch for the icon for as long as it takes, on a thread of its own.
+
+        It only watches. Asking for it again — `visible = False` then `True`,
+        which is the only way to make pystray issue a second `NIM_ADD` — would be
+        a worse answer than this one, because pystray sets `visible` from its own
+        side of the call and never learns whether the shell took the icon. A
+        forced re-add would therefore report "the icon appeared" on the first
+        attempt whether or not the notification area has it, which is the one
+        thing this log line exists to say. So the answer stays the only honest
+        one available from inside the process, and it is simply waited for.
+        """
+        deadline = time.monotonic() + TRAY_RETRY_SECONDS
+        while not self._stopped and time.monotonic() < deadline:
+            time.sleep(TRAY_RETRY_INTERVAL)
+            if self.visible:
+                log.info("tray icon appeared late, after the first refusal")
+                return
+        if not self._stopped:
+            log.error(
+                "the tray icon never appeared in %.0fs, so the panel cannot be "
+                "reached from the tray. Start the app again once Explorer has "
+                "settled, or run it from a shortcut rather than straight out of "
+                "an archive.", TRAY_RETRY_SECONDS,
+            )
 
     @property
     def visible(self) -> bool:
@@ -259,6 +311,7 @@ class TrayIcon:
             log.debug("tray notification unavailable", exc_info=True)
 
     def stop(self) -> None:
+        self._stopped = True
         try:
             self._icon.stop()
         except Exception:

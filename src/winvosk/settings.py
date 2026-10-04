@@ -2,11 +2,11 @@
 
 The file is per-machine state, so it is ignored by git and deleted freely: a
 missing or broken file only costs the defaults, never a working application.
-The schema is seven keys: the hotkey list, the interface language, the interface
-theme and four on/off switches — "Печатать в активное окно", "Сразу в буфер",
-"Исправлять свои слова" and "Переключать запись". Unknown keys are ignored on
-read so a file written by a
-later version still loads, and a value of the wrong shape or one `hotkey.parse`
+The schema is ten keys: the hotkey list, the interface language, the interface
+theme, the recording device and six on/off switches — "Печатать в активное окно",
+"Сразу в буфер", "Исправлять свои слова", "Переключать запись", "Писать журнал в
+файл" and "Сохранять историю". Unknown keys are ignored on read so a file written
+by a later version still loads, and a value of the wrong shape or one `hotkey.parse`
 refuses is replaced by the defaults rather than handed on to the listener, which
 would raise and keep the app from starting at all.
 
@@ -33,8 +33,11 @@ LIVE_TYPE_KEY = "live_typing"
 CLIPBOARD_KEY = "copy_to_clipboard"
 CORRECT_KEY = "correct_words"
 TOGGLE_KEY = "toggle_recording"
+LOG_KEY = "write_log"
+HISTORY_KEY = "write_history"
 LANGUAGE_KEY = "language"
 THEME_KEY = "theme"
+DEVICE_KEY = "input_device"
 
 
 def load() -> dict[str, Any]:
@@ -213,6 +216,34 @@ def store_toggle_recording(value: bool) -> bool:
     return store_flag(TOGGLE_KEY, value)
 
 
+def logging_enabled() -> bool:
+    """True when the log file keeps INFO as well as warnings and errors.
+
+    Read from disk on every use like every other switch, so the file handler is
+    re-levelled from the value that is really in effect rather than from a copy
+    the panel happens to be holding.
+    """
+    return flag(LOG_KEY, config.LOG_WRITE_DEFAULT)
+
+
+def store_logging_enabled(value: bool) -> bool:
+    return store_flag(LOG_KEY, value)
+
+
+def history_enabled() -> bool:
+    r"""True when a finished session is appended to the dated file under logs\.
+
+    This switch governs what is written from now on. Files already on disk are
+    never touched, which is why the history tab keeps showing them while the
+    switch is off.
+    """
+    return flag(HISTORY_KEY, config.HISTORY_WRITE_DEFAULT)
+
+
+def store_history_enabled(value: bool) -> bool:
+    return store_flag(HISTORY_KEY, value)
+
+
 def language() -> str:
     """The interface language, or the shipped default when nothing usable is stored.
 
@@ -269,6 +300,45 @@ def store_theme_name(value: str) -> bool:
         return False
     data = load()
     data[THEME_KEY] = value
+    return save(data)
+
+
+def input_device() -> str | None:
+    """The stored recording device's name, or None to leave it to the system.
+
+    A name and not an index, because an index is a position in a list PortAudio
+    builds per machine and per boot: stored, it is a pointer at whatever sits in
+    that slot today, which is how a saved microphone turns into a different one
+    without a word of warning. A name that no longer resolves to a device is
+    still returned — the engine falls back to the automatic choice and says so in
+    the log, which is a recoverable answer, where refusing to store a name that
+    exists today would not be.
+    """
+    stored = load().get(DEVICE_KEY)
+    if stored is None:
+        return None
+    if isinstance(stored, str) and stored.strip():
+        return stored.strip()
+    log.warning(
+        "%s: %r must be the name of a recording device or null, using the "
+        "system default", SETTINGS_FILE, stored,
+    )
+    return None
+
+
+def store_input_device(value: str | None) -> bool:
+    """Persist the recording device. None means the system default.
+
+    False means the disk still holds the old value.
+    """
+    data = load()
+    if value is None:
+        data[DEVICE_KEY] = None
+    elif isinstance(value, str) and value.strip():
+        data[DEVICE_KEY] = value.strip()
+    else:
+        log.warning("%r is not something this app can record from", value)
+        return False
     return save(data)
 
 

@@ -77,6 +77,27 @@ def _version() -> str:
     return config.VERSION
 
 
+def _clear(folder: Path) -> None:
+    """Empty a folder that will not delete, and say so rather than failing.
+
+    Reported because a folder that survives here is also a folder the next run
+    has to clear again, and it is worth knowing it is there.
+    """
+    survivors = []
+    for path in sorted(folder.rglob("*"), reverse=True):
+        try:
+            path.rmdir() if path.is_dir() else path.unlink()
+        except OSError:
+            survivors.append(path)
+    if survivors:
+        print(f"  warning: {len(survivors)} item(s) in {folder.name} are in use "
+              f"and stay: {survivors[0].relative_to(folder)}"
+              f"{' and more' if len(survivors) > 1 else ''}")
+    print(f"  warning: {folder.name} itself could not be removed; the release "
+          f"was staged into it anyway. Close anything running from it and delete "
+          f"it before the next build.")
+
+
 def stage(version: str) -> Path:
     """A copy of the built folder with nothing personal left in it."""
     if not (BUILT / "WinVosk.exe").exists():
@@ -86,8 +107,19 @@ def stage(version: str) -> Path:
         )
     staged = ROOT / "dist" / f"WinVosk-{version}-win64"
     if staged.exists():
-        shutil.rmtree(staged)
-    shutil.copytree(BUILT, staged)
+        try:
+            shutil.rmtree(staged)
+        except OSError as exc:
+            # A folder nothing can delete is normal on Windows for a few minutes
+            # after 172 MB have been copied into it: an indexer or a scanner holds
+            # a handle on the directory itself, which stops the final `rmdir`
+            # while every file inside goes quietly. Blocking a release on that is
+            # worse than the leftover, so the folder is emptied where it can be
+            # and the copy goes on top. Anything of the previous build that could
+            # reach the user is caught below by the same check that refuses an
+            # archive with anything personal in it.
+            _clear(staged)
+    shutil.copytree(BUILT, staged, dirs_exist_ok=True)
 
     for name in PERSONAL_NAMES:
         (staged / name).unlink(missing_ok=True)

@@ -14,9 +14,9 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from winvosk import (autostart, config, corrector, diary, hotkey, keystrokes,
-                      settings, text, theme, vocabulary)
+                      recognizer, settings, text, theme, vocabulary)
 from winvosk.panel import Panel
-from winvosk.recognizer import DictationEngine, input_device
+from winvosk.recognizer import DictationEngine, device_name, input_device
 from winvosk.tray import TrayIcon
 
 log = logging.getLogger("winvosk.app")
@@ -77,7 +77,7 @@ class App:
         self._engine = DictationEngine(
             model_path,
             events,
-            device=config.MIC_DEVICE,
+            device=config.MIC_DEVICE or settings.input_device(),
             sample_rate=config.SAMPLE_RATE,
             block_size=config.BLOCK_SIZE,
             show_words=config.SHOW_WORDS,
@@ -91,8 +91,12 @@ class App:
             autostart=autostart.is_enabled(),
             correct_words=settings.correct_words(),
             toggle=settings.toggle_recording(),
+            write_history=settings.history_enabled(),
+            write_log=settings.logging_enabled(),
             language=settings.language(),
             theme_name=settings.theme_name(),
+            devices=self._recording_devices(),
+            device=config.MIC_DEVICE or settings.input_device(),
         )
         self._hotkeys: tuple[str, ...] = tuple(config.HOTKEYS)
         self._tray = TrayIcon(
@@ -109,6 +113,21 @@ class App:
     @property
     def _hotkey_label(self) -> str:
         return text.t("hotkey_or").join(self._hotkeys)
+
+    @staticmethod
+    def _recording_devices() -> list[tuple[str, bool]]:
+        """What this machine can record from, as (name, is the system default).
+
+        Asked once at start up and again whenever the device card is opened, and
+        never raises: the list fills a group of radio buttons, and a card that
+        cannot be built leaves the user with no way to change the device at all.
+        """
+        return [
+            (device.name, device.default) for device in recognizer.input_devices()
+        ]
+
+    def _publish_devices(self) -> None:
+        self._panel.set_devices(self._recording_devices(), settings.input_device())
 
     def _corrected(self, text: str) -> str:
         """Swap near misses of the user's words in, on a finished utterance.
@@ -373,14 +392,22 @@ class App:
             self._set_clipboard(bool(value))
         elif name == "set_correct_words":
             self._set_correct_words(bool(value))
+        elif name == "set_history":
+            self._set_history(bool(value))
+        elif name == "set_logging":
+            self._set_logging(bool(value))
         elif name == "set_language":
             self._set_language(str(value))
         elif name == "set_autostart":
             self._set_autostart(bool(value))
         elif name == "set_theme":
             self._set_theme(str(value))
+        elif name == "set_device":
+            self._set_device(value if isinstance(value, str) else None)
         elif name == "copy":
             self._copy(self._session.total or self._panel.text)
+        elif name == "copy_history":
+            self._copy_history(str(value))
         elif name == "clear":
             self._panel.clear()
             self._session.reset()
@@ -444,6 +471,15 @@ class App:
                 [str(word) for word in event.get("missing", [])],
                 len(event.get("known", [])) + len(event.get("missing", [])),
             )
+        elif kind == "device_error":
+            # The microphone could not be opened for that one recording. The
+            # engine carries on and the next recording tries again, so this is a
+            # message and not a fatal error: a headset asleep in the tray is a
+            # normal state of a Windows machine, not a broken app.
+            message = str(event.get("message", ""))
+            log.warning("input device: %s", message)
+            self._panel.set_status(message)
+            self._panel.toast(message, error=True)
 
     def _on_state(self, event: dict) -> None:
         recording = bool(event.get("recording"))
@@ -495,16 +531,76 @@ class App:
         self._panel.set_text(text, "")
         if not text:
             return
-        diary.append(text)
+        if diary.append(text):
+            # Straight on the Tk thread, which is where this runs: `_pump`
+            # drains the event queue. A command round-trip would show the new
+            # record a frame later for no gain.
+            self._panel.reload_history()
         if settings.copy_to_clipboard() and keystrokes.copy_to_clipboard(text):
             self._panel.append_note(
                 text.t("note_clipboard_also") if live else text.t("note_clipboard"))
 
     def _copy(self, text: str) -> None:
         if keystrokes.copy_to_clipboard(text.strip()):
+            self._panel.toast(text.t("copied"))
             self._tray.notify(text.t("copied"), config.APP_NAME)
         else:
+            self._panel.toast(text.t("nothing_to_copy"), error=True)
             self._tray.notify(text.t("nothing_to_copy"), config.APP_NAME)
+
+    def _copy_history(self, text: str) -> None:
+        """Put one record from the history tab on the clipboard, and say so there.
+
+        The same `keystrokes.copy_to_clipboard` the dictation tab uses, because
+        copying text out is one operation with one owner: a second path would be
+        a second thing to get wrong, and the clipboard is not somewhere this app
+        gets to be clever.
+        """
+        if keystrokes.copy_to_clipboard(text.strip()):
+            self._panel.set_history_hint(text.t("copied"))
+            self._tray.notify(text.t("copied"), config.APP_NAME)
+        else:
+            self._panel.set_history_hint(text.t("nothing_to_copy"), error=True)
+            self._tray.notify(text.t("nothing_to_copy"), config.APP_NAME)
+
+    def _set_history(self, enabled: bool) -> None:
+        """Persist "Keep the history" and put the switch back if the write failed.
+
+        No listener and no registry to rebuild: this switch governs what is
+        written from now on, and `diary.append` reads it from the disk for every
+        session, so the next one already obeys it.
+        """
+        if not settings.store_history_enabled(enabled):
+            self._panel.set_history_writing(settings.history_enabled())
+            self._option_failed(text.t("save_failed"))
+            return
+        log.info("history %s", "on" if enabled else "off")
+        self._panel.set_history_writing(enabled)
+        self._panel.set_option_hint(
+            text.t("history_on" if enabled else "history_off")
+        )
+
+    def _set_logging(self, enabled: bool) -> None:
+        """Persist "Write the log file" and re-level the handler that is open.
+
+        The write comes first and the re-level second, so a refused write leaves
+        the running process logging exactly what the disk says. `set_log_verbose`
+        touching only the file handler is what keeps the console flags and the
+        probes logging at INFO either way.
+        """
+        if not settings.store_logging_enabled(enabled):
+            self._panel.set_log_writing(settings.logging_enabled())
+            self._option_failed(text.t("save_failed"))
+            return
+        if not config.set_log_verbose(enabled):
+            # No file handler: the app was assembled without one, so the stored
+            # value is right and the run cannot honour it. Said out loud rather
+            # than left as a switch that appears to do nothing.
+            log.warning("no log file handler to re-level")
+            self._option_failed(text.t("save_failed"))
+            return
+        self._panel.set_log_writing(enabled)
+        self._panel.set_option_hint(text.t("log_on" if enabled else "log_off"))
 
     def _set_live_typing(self, enabled: bool) -> None:
         """Persist "Type into the active window" and say what it will do."""
@@ -538,6 +634,26 @@ class App:
         self._panel.set_option_hint(
             text.t("corrections_on", count=len(self._words)) if enabled
             else text.t("corrections_off"))
+
+    def _set_device(self, name: str | None) -> None:
+        """Persist the recording device and hand it to the engine.
+
+        A name and not an index, because an index is a position in a list Windows
+        builds per machine and per boot: stored, it points at whatever sits in
+        that slot today, which is how a saved microphone becomes a different one
+        with no warning. The engine is told rather than rebuilt, so a recording
+        already running keeps the device it started with.
+        """
+        if not settings.store_input_device(name):
+            self._publish_devices()
+            self._option_failed(text.t("device_failed"))
+            return
+        self._engine.replace_device(name)
+        log.info("recording device is now %r", name or "the system default")
+        self._panel.set_option_hint(
+            text.t("device_switched", detail=name or text.t("device_auto"))
+        )
+        self._publish_devices()
 
     def _set_language(self, code: str) -> None:
         """Persist the interface language and repaint everything in it.
@@ -681,7 +797,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    config.setup_logging()
+    config.setup_logging(verbose=settings.logging_enabled())
     # First thing, before any window or report is built: every message comes from
     # `text`, and anything built in the wrong language would have to be rebuilt.
     text.set_language(settings.language())
@@ -766,7 +882,15 @@ def _check_bundle() -> int:
         from winvosk.panel import Panel
         from winvosk.tray import TrayIcon
 
-        panel = Panel(queue_mod.Queue(), lambda: None)
+        # Two devices named here rather than the ones on this machine: the check
+        # must not depend on what hardware happens to be plugged in, and the card
+        # it draws is the one a user with a microphone sees. The engine is not
+        # built, so neither of them is ever opened.
+        panel = Panel(
+            queue_mod.Queue(), lambda: None,
+            devices=(("Check bundle default input", True),
+                     ("Check bundle second input", False)),
+        )
         root = panel._root
         try:
             lines.append(f"tcl / tk    : {root.tk.call('info', 'patchlevel')}")
@@ -786,6 +910,18 @@ def _check_bundle() -> int:
                 root.update_idletasks()
                 root.update()
             lines.append(f"settings tab: {panel.check_settings_reachable()}")
+            # Both radio groups on that page — the language and the device — have
+            # to show exactly one marked option. A group that marks all of them
+            # works and looks wrong, and nothing else here would notice.
+            lines.append(f"radios      : {panel.check_radios()}")
+            # The history tab is the third page, and the only check that ever
+            # looks at it: a tab that cannot be scrolled to its last record looks
+            # complete while it is not.
+            panel._notebook.select(2)
+            for _ in range(4):
+                root.update_idletasks()
+                root.update()
+            lines.append(f"history tab : {panel.check_history_reachable()}")
             panel._notebook.select(0)
             root.update_idletasks()
             panel.hide()
@@ -848,6 +984,14 @@ def tkinter_style(root) -> str:
 def _diagnose() -> int:
     import sounddevice as sd
 
+    # What the engine will actually open: the constant if it says anything, the
+    # stored choice otherwise, and the automatic answer when neither does. The
+    # point of the line is that it is the truth about this machine, so it cannot
+    # report the automatic answer while the settings name a device.
+    effective = config.MIC_DEVICE or settings.input_device()
+    chosen = config.MIC_DEVICE or (settings.input_device() or "")
+    index = input_device(effective)
+
     lines = [
         f"{config.APP_NAME}   : {config.VERSION}",
         f"python      : {sys.version.split()[0]}  ({sys.executable})",
@@ -872,12 +1016,18 @@ def _diagnose() -> int:
         f"corrections : {'on' if settings.correct_words() else 'off'}, "
         f"{len(vocabulary.own_words(config.PHRASES_FILE))} own word(s) "
         f"from {config.PHRASES_FILE.name}",
+        # The stored value and what the process actually opened the file at,
+        # which differ only if a handler was attached before the switch was read.
+        f"history     : {'on' if settings.history_enabled() else 'off'}, "
+        f"{len(diary.recent())} recent record(s) in {config.LOGS_DIR}",
+        f"log file    : {config.LOG_FILE} "
+        f"({'everything' if settings.logging_enabled() else 'errors only'})",
         f"settings    : {settings.SETTINGS_FILE}",
         f"insertion   : simulated keystrokes, delay {config.TYPE_DELAY}s",
         f"max session : {config.MAX_SESSION_SECONDS:.0f}s",
-        f"log file    : {config.LOG_FILE}",
-        f"records from: {input_device(config.MIC_DEVICE)} "
-        f"(PortAudio default input {sd.default.device[1]})",
+        f"records from: {device_name(index)} [{index}] "
+        f"({chosen or 'the system default'}; "
+        f"PortAudio default input {sd.default.device[1]})",
         "input devices:",
     ]
     for index, device in enumerate(sd.query_devices()):

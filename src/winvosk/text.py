@@ -40,6 +40,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     # panel: tabs, status, buttons
     "tab_dictation": {"ru": "Диктовка", "en": "Dictation"},
     "tab_settings": {"ru": "Настройки", "en": "Settings"},
+    "tab_history": {"ru": "История", "en": "History"},
     "status_loading": {"ru": "Загрузка модели...", "en": "Loading the model..."},
     "status_ready": {"ru": "Готов", "en": "Ready"},
     "status_recording": {"ru": "Идёт запись", "en": "Recording"},
@@ -65,7 +66,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Press {label} and speak, press again to stop   ·   closing the "
               "window hides it to the tray",
     },
-    "title_input": {"ru": "вход: {device}", "en": "input: {device}"},
     "hotkey_or": {"ru": "  или  ", "en": "  or  "},
 
     # panel: the settings tab
@@ -86,6 +86,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "group_startup": {"ru": "Запуск", "en": "Startup"},
     "group_language": {"ru": "Язык", "en": "Language"},
     "group_appearance": {"ru": "Оформление", "en": "Appearance"},
+    "group_records": {"ru": "Запись", "en": "Records"},
     "group_words": {"ru": "Свои слова", "en": "Your own words"},
     "option_typing": {
         "ru": "Печатать в активное окно",
@@ -130,6 +131,67 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "language_ru": {"ru": "Русский", "en": "Русский"},
     "language_en": {"ru": "English", "en": "English"},
+
+    # panel: the settings tab, where the microphone comes from
+    "group_input": {"ru": "Устройство записи", "en": "Recording device"},
+    "device_auto": {"ru": "По умолчанию системы", "en": "System default"},
+    "device_default_mark": {"ru": " — по умолчанию", "en": " — default"},
+    "device_hint": {
+        "ru": "Слова распознаются с выбранного устройства. Микрофон "
+              "открывается только на время записи и сразу закрывается",
+        "en": "Words are recognised from the chosen device. The microphone is "
+              "opened only while recording and closed again at once",
+    },
+    "device_none": {
+        "ru": "Устройств записи не найдено — проверьте настройки звука Windows",
+        "en": "No recording device was found — check the Windows sound settings",
+    },
+    "device_switched": {
+        "ru": "Устройство записи: {detail}",
+        "en": "Recording device: {detail}",
+    },
+    "device_failed": {
+        "ru": "Не удалось сохранить устройство записи",
+        "en": "Could not save the recording device",
+    },
+    "mic_open_failed": {
+        "ru": "Не удалось открыть микрофон: {error}",
+        "en": "Could not open the microphone: {error}",
+    },
+
+    # panel: the settings tab, what this machine is left with
+    "option_history": {
+        "ru": "Сохранять историю",
+        "en": "Keep the history",
+    },
+    "history_switch_hint": {
+        "ru": "Каждая законченная сессия дописывается в файл за день. Уже "
+              "записанное остаётся",
+        "en": "Every finished session is appended to the file for its day. What "
+              "is already there stays",
+    },
+    "option_log": {
+        "ru": "Писать журнал в файл",
+        "en": "Write the log file",
+    },
+    "log_switch_hint": {
+        "ru": "Выключено — в журнал попадают только ошибки. Он всё равно нужен, "
+              "чтобы найти причину сбоя",
+        "en": "Off — only errors reach the log. It is still what a crash has to "
+              "be found from",
+    },
+
+    # panel: the history tab
+    "history_caption": {"ru": "Последние записи", "en": "Recent records"},
+    "history_hint": {
+        "ru": "Двойной щелчок по строке копирует её в буфер",
+        "en": "Double-click a row to copy it",
+    },
+    "history_off_note": {
+        "ru": "Новые записи не сохраняются. Ниже — то, что уже записано.",
+        "en": "New records are not being saved. Below is what is already there.",
+    },
+    "history_empty": {"ru": "Записей пока нет", "en": "No records yet"},
 
     # the own-word check, from the settings tab
     "button_check_words": {
@@ -227,6 +289,22 @@ MESSAGES: dict[str, dict[str, str]] = {
     "language_saved": {
         "ru": "Язык интерфейса: {name}",
         "en": "Interface language: {name}",
+    },
+    "history_on": {
+        "ru": "История сохраняется",
+        "en": "The history is being saved",
+    },
+    "history_off": {
+        "ru": "История выключена — новые записи не сохраняются",
+        "en": "History is off — new records will not be saved",
+    },
+    "log_on": {
+        "ru": "В журнал пишется всё",
+        "en": "The log keeps everything",
+    },
+    "log_off": {
+        "ru": "В журнал пишутся только ошибки",
+        "en": "The log keeps errors only",
     },
     "report_title": {"ru": "отчёт", "en": "report"},
     "title_error": {"ru": "Ошибка", "en": "Error"},

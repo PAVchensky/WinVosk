@@ -46,6 +46,12 @@ datas.append((str(ROOT / "licenses"), "licenses"))
 hiddenimports = ["vosk.vosk_cffi"]
 
 icon = ROOT / "build" / "WinVosk.ico"
+# The version resource Explorer shows on hover and in the property sheet, written
+# by `tools\build_exe.py` out of `config.VERSION`. Named here and not held here:
+# a second copy of the release number in the repository is a second thing to
+# forget, and this file is the one place a stale number would be invisible until
+# somebody opened Properties on the wrong exe.
+version = ROOT / "build" / "WinVosk.version"
 
 a = Analysis(
     [str(ROOT / "src" / "run.py")],
@@ -102,6 +108,7 @@ exe = EXE(
     console=False,          # no console: the log file is the diagnostic
     disable_windowed_traceback=False,
     icon=str(icon) if icon.exists() else None,
+    version=str(version) if version.exists() else None,
 )
 
 coll = COLLECT(

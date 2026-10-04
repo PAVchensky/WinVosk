@@ -38,23 +38,23 @@ upstream, dictation behaviour bugs go here.
 
 ```
 config.py          paths, model resolution, VERSION, tunables, logging
-recognizer.py      vosk model + microphone stream + worker thread, and the sub-frame levels the chip animates from
+recognizer.py      vosk model + microphone stream (opened per recording) + worker thread, and the sub-frame levels the chip animates from
 hotkey.py          global push-to-talk hotkey via WH_KEYBOARD_LL (ctypes), plus its capture mode
 keystrokes.py      text typed with KEYEVENTF_UNICODE
 vocabulary.py      phrases.txt loader and --vocab-check
 theme.py           design tokens and the Pillow painter behind them: the palettes, the spacing and type scales, rounded corners, soft shadows, DWM window dressing, DPI awareness
-widgets.py         the panel's own widgets, since Tk has neither rounded corners nor soft shadows nor hover: cards, buttons, choices, switch, field, tabs, scrollbar, scroller, transcript
-panel.py           always-on-top Tk panel, two tabs; built unmapped and kept in the tray
+widgets.py         the panel's own widgets, since Tk has neither rounded corners nor soft shadows nor hover: cards, buttons, choices, switch, field, tabs, scrollbar, scroller, transcript, history row
+panel.py           always-on-top Tk panel, three tabs; built unmapped and kept in the tray
 overlay.py         focusless chip: eleven bars over a clock, antialiased Pillow plate, centred on the work area
-settings.py        settings.json: hotkey list, interface language, interface theme and on/off switches, atomic write, defaults on anything unusable
+settings.py        settings.json: hotkey list, interface language, interface theme, recording device and six on/off switches, atomic write, defaults on anything unusable
 corrector.py       own-word correction on finished utterances, difflib, cutoff in one constant, plus the glue that repairs a word the model split across a space
 text.py            every user visible string, ru and en, plus the language switch
 tray.py            pystray icon and menu
 autostart.py       HKCU\...\Run entry
-diary.py           dated history under logs\
+diary.py           dated history under logs\, the switch that gates it, and the reader behind the history tab
 file_transcribe.py fallback: media file to text, plus --self-test
 run.py             entry point
-tools\             verification probes (hold, typing, hook, settings, correct, lang, readme, cleanup), build_exe.py, which prunes _internal\ after PyInstaller, package_release.py, which stages the release archive, and make_images.py, which redraws every README screenshot from the live widgets
+tools\             verification probes (hold, typing, hook, settings, history, correct, lang, readme, cleanup), build_exe.py, which prunes _internal\ after PyInstaller, package_release.py, which stages the release archive, and make_images.py, which redraws every README screenshot from the live widgets
 WinVosk.spec       PyInstaller build definition: one folder, no console
 requirements.txt   the five runtime pins, also the ones WinVosk.bat prints
 requirements-dev.txt  pyinstaller, needed only to build
@@ -101,6 +101,7 @@ Run everything from the project root with the venv interpreter.
 .\.venv\Scripts\python.exe .\tools\hold_probe.py
 .\.venv\Scripts\python.exe .\tools\typing_probe.py
 .\.venv\Scripts\python.exe .\tools\settings_probe.py   # headless: no GUI, mic or model
+.\.venv\Scripts\python.exe .\tools\history_probe.py    # headless: the history reader and its gate
 .\.venv\Scripts\python.exe .\tools\correct_probe.py    # headless: correction rules and cost
 .\.venv\Scripts\python.exe .\tools\readme_probe.py     # headless: the GitHub-facing pages
 .\.venv\Scripts\python.exe .\tools\build_exe.py        # build dist\WinVosk\
