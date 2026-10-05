@@ -27,12 +27,15 @@ put back from the attributes this object already holds.
 
 from __future__ import annotations
 
+import json
 import logging
 import queue
 import tkinter as tk
 from collections.abc import Callable, Sequence
 from datetime import date
+from pathlib import Path
 from tkinter import messagebox
+from typing import NamedTuple
 
 from PIL import ImageTk
 
@@ -68,6 +71,122 @@ HISTORY_TAB = 2
 
 _CAPTURE_PROMPT = "capture_prompt"
 
+# The settings page, as data. Every card the page can hold is named here with the
+# method that builds it, and the order is the order they are shown in: one list,
+# so a card cannot exist on the page without being in it, and the design editor
+# cannot offer a card the panel would refuse to draw.
+CARD_BUILDERS: dict[str, str] = {
+    "group_insertion": "_build_card_insertion",
+    "group_input": "_build_card_input",
+    "group_startup": "_build_card_startup",
+    "group_language": "_build_card_language",
+    "group_appearance": "_build_card_appearance",
+    "group_records": "_build_card_records",
+}
+DEFAULT_COLUMNS = 2
+# Where the editor writes what the user arranged. Beside the app, next to
+# settings.json, and read at start up: a file that is not there is not an error, it
+# is the layout the page ships with.
+LAYOUT_FILE = "layout.json"
+
+
+class Layout(NamedTuple):
+    """The shape of the settings page: how many columns, what order, what is off.
+
+    A value rather than a flag, so "one column", "two columns" and "three columns"
+    are one number and there is no fourth state to reason about. `order` is a tuple
+    because it is a sequence and is compared as one; `hidden` is a set because a
+    card is either shown or not and there is nothing to order about it.
+    """
+
+    columns: int
+    order: tuple[str, ...]
+    hidden: frozenset[str]
+
+    def as_json(self) -> dict:
+        return {
+            "columns": self.columns,
+            "order": list(self.order),
+            "hidden": sorted(self.hidden),
+        }
+
+
+def read_layout(path: Path | None = None) -> Layout:
+    """The stored layout, or the shipped one. Never raises.
+
+    Everything about this file is untrusted, because it is written by a tool rather
+    than by the panel and a person is going to edit it by hand: a name that is not
+    a card on the page is dropped, a card missing from `order` is put back where it
+    belongs rather than lost, a `columns` that is not 1..4 falls back to two. A
+    layout that cannot be read is a layout that was never written, and the page
+    still has to come up.
+    """
+    target = Path(path) if path is not None else config.BASE_DIR / LAYOUT_FILE
+    try:
+        raw = json.loads(target.read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return Layout(DEFAULT_COLUMNS, tuple(CARD_BUILDERS), frozenset())
+    except (OSError, ValueError):
+        log.warning("could not read %s, using the shipped layout", target,
+                    exc_info=True)
+        return Layout(DEFAULT_COLUMNS, tuple(CARD_BUILDERS), frozenset())
+    if not isinstance(raw, dict):
+        log.warning("%s does not hold an object, using the shipped layout", target)
+        return Layout(DEFAULT_COLUMNS, tuple(CARD_BUILDERS), frozenset())
+
+    columns = raw.get("columns", DEFAULT_COLUMNS)
+    if not isinstance(columns, int) or isinstance(columns, bool) or not 1 <= columns <= 4:
+        log.warning("%s: columns=%r must be a whole number from 1 to 4, using %d",
+                    target, columns, DEFAULT_COLUMNS)
+        columns = DEFAULT_COLUMNS
+
+    order: list[str] = []
+    listed = raw.get("order")
+    if isinstance(listed, list):
+        for key in listed:
+            if key in CARD_BUILDERS and key not in order:
+                order.append(str(key))
+            elif key not in CARD_BUILDERS:
+                log.warning("%s: %r is not a card on the page, dropping it",
+                            target, key)
+    else:
+        log.warning("%s: order=%r must be a list, keeping the shipped order",
+                    target, listed)
+    # A card nobody mentioned is still a card: appended in its shipped order
+    # rather than silently deleted from the page.
+    for key in CARD_BUILDERS:
+        if key not in order:
+            order.append(key)
+
+    hidden = raw.get("hidden", [])
+    if not isinstance(hidden, list):
+        log.warning("%s: hidden=%r must be a list, showing everything", target, hidden)
+        hidden = []
+    return Layout(columns, tuple(order), frozenset(str(k) for k in hidden))
+
+
+def write_layout(layout: Layout, path: Path | None = None) -> Path:
+    """Write the layout where `read_layout` will find it, and say where."""
+    target = Path(path) if path is not None else config.BASE_DIR / LAYOUT_FILE
+    target.write_text(
+        json.dumps(layout.as_json(), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    log.info("layout written: %s", target)
+    return target
+
+
+def _log_callback_exception(exc, value, tb) -> None:
+    """Where an exception inside a Tk callback goes instead of nowhere.
+
+    Assigned onto the root in `Panel.__init__`, so it is per-window rather than
+    a module-level override that would reach into every `Tk` in the process. Tk
+    calls it for any exception from any callback, including the scheduled ones
+    this application is built on, and the report is the whole diagnosis of a
+    fault that otherwise leaves a live process doing nothing.
+    """
+    log.error("unhandled exception in a Tk callback", exc_info=(exc, value, tb))
+
 
 def _walk(widget: tk.Misc):
     """Every widget under `widget`, the whole way down.
@@ -102,6 +221,7 @@ class Panel:
         theme_name: str = theme.DEFAULT_THEME,
         devices: Sequence[tuple[str, bool]] = (),
         device: str | None = None,
+        layout: Layout | None = None,
     ) -> None:
         # Must happen before there is a window: afterwards Windows refuses, and
         # the panel comes up with every corner resampled a second time.
@@ -135,8 +255,22 @@ class Panel:
         self._devices = list(devices)
         self._device_choice = device
         self._device_box: tk.Frame | None = None
+        self._device_select: widgets.Select | None = None
+        self._device_names: tuple[str, ...] = ()
+        # How the settings page is arranged: columns, order, what is hidden. Read
+        # from beside the app unless a caller hands one over, so the panel and the
+        # design editor can never be looking at different layouts.
+        self._layout = read_layout() if layout is None else layout
+        # These three belong to the "Where the text goes" card and are written
+        # into by methods that run whatever the layout says. None means the card
+        # is not on the page, and every writer has to put up with that rather than
+        # raise from a repaint: a hidden card is a decision, not a fault.
+        self._correct_check: widgets.Choice | None = None
+        self._word_hint: widgets.Paragraph | None = None
+        self._check_words_button: widgets.Button | None = None
         self._toast: widgets.Toast | None = None
         self._settings_page: widgets.Scroller | None = None
+        self._history_page: widgets.Scroller | None = None
         # What the rows on the history tab were last built from, so a look at the
         # tab that finds nothing new does not throw ten rows away and build ten
         # more. None until they exist.
@@ -147,6 +281,13 @@ class Panel:
         self._colours = theme.palette(self._theme_name)
 
         self._root = tk.Tk()
+        # An exception inside any Tk callback is reported here rather than
+        # printed. The default handler writes a traceback to `sys.stderr`, and a
+        # bundle built with `console=False` has `sys.stderr is None` — so the one
+        # record of the fault went nowhere at all, and what was left was a program
+        # that had stopped doing things with no explanation. The same reason
+        # `config.setup_logging` installs a `threading.excepthook`, one layer up.
+        self._root.report_callback_exception = _log_callback_exception
         # Withdrawn before a single widget is built, so the window is never
         # mapped: no flash on the way to the tray, and no chance of taking the
         # focus away from whatever the user was typing in. `tk.Tk()` maps by
@@ -168,12 +309,17 @@ class Panel:
         # consequence of the first one is visible.
         self._write_history = tk.BooleanVar(value=bool(write_history))
         self._write_log = tk.BooleanVar(value=bool(write_log))
-        self._dark_var = tk.BooleanVar(value=theme.is_dark(self._theme_name))
+        # Which of the themes is in force, as the appearance card's own variable.
+        # Held as a field rather than a local because `set_theme` rebuilds the page
+        # and the rebuilt radio group has to be marked from what is in effect.
+        self._theme_var: tk.StringVar | None = None
         self._language = tk.StringVar(value=language)
         self._device_var = tk.StringVar(value=device or "")
         # The chip's equalizer is fed by the engine, not by the panel: the
         # levels live in the audio thread and are read here, on the Tk thread.
-        self._overlay = overlay.RecordingOverlay(self._root, next_level)
+        self._overlay = overlay.RecordingOverlay(
+            self._root, next_level, self._theme_name,
+        )
         self._root.title(self._title())
         self._root.attributes("-topmost", True)
         self._root.protocol("WM_DELETE_WINDOW", self.hide)
@@ -221,12 +367,30 @@ class Panel:
         self.reload_history()
 
     def _on_tab(self, index: int) -> None:
-        """Fill the history tab from the disk when it is looked at.
+        """Act on a tab being opened: fill the history, show each page from its top.
 
         The panel spends most of its life on the dictation tab while records are
         being written, so a tab filled once would show the state of the moment it
         was opened rather than what has been said since.
+
+        Every scrolling page opens at the top rather than wherever it was left.
+        A canvas keeps its view, so the settings tab would come back at the
+        scroll the last walk to its end left behind - which is the middle of the
+        page, with the first card off screen, and the page looks like it starts
+        in the middle of the options. Where the user left a page is worth
+        remembering on a long list of records and worth nothing on a page that is
+        read from the top every time, so the top is the right place to come back
+        to on both.
+
+        The focus is deliberately not moved onto the first control. The panel can
+        be open while the user is typing somewhere else - that is the whole
+        reason dictated text is not stolen - so a control holding the focus would
+        be a control that receives what the user types at their document. A
+        visible top is the part that was actually wrong.
         """
+        for page in (self._settings_page, self._history_page):
+            if page is not None:
+                page.to_top()
         if index == HISTORY_TAB:
             self.reload_history()
 
@@ -313,24 +477,28 @@ class Panel:
         )
 
     def _build_settings(self, parent: widgets.Scroller) -> None:
-        """One card across the top of the page, then a grid of six under it.
+        """One card across the top of the page, then the rest in a grid under it.
 
         The key gets the full width because its field has to hold a combination
         in monospace next to a Reset button, and neither of those is something to
         squeeze for the sake of a column.
 
-        The six below it are a grid and not two packed columns, which is the whole
-        of what was wrong with this tab: packed, each side was as tall as its own
-        content, so one column ended in the middle of the page and the other ran
-        on past it, and the eye had three different bottoms to line up. In a grid
-        a row is as tall as its tallest cell and both of its cards are stretched
-        to that height, so the page has one rhythm and a card's own content stays
-        at the top of the space it is given.
+        Everything below it is a grid whose shape is `self._layout`: how many
+        columns, in what order, and which cards are not drawn at all. A row is as
+        tall as its tallest cell and both of its cards are stretched to that
+        height, so the page has one rhythm and a card's own content stays at the
+        top of the space it is given. Two packed columns were the fault this
+        replaced: each side was as tall as its own content, so one ended in the
+        middle of the page, the other ran on past it, and the eye had three
+        different bottoms to line up.
+
+        The cards are built by name out of `CARD_BUILDERS`, so which of them exist
+        and what order they arrive in is one list rather than a page of code that
+        has to be edited to match it.
         """
         colours = self._colours
         body = parent.body
         pad = theme.px(theme.SPACE_XL)
-        gap = theme.px(theme.SPACE_LG)
         wrap = self._wrap()
         column = self._column_width()
 
@@ -342,14 +510,71 @@ class Panel:
         intro.pack(fill="x", padx=pad, pady=(theme.px(theme.SPACE), 0))
         self._track(intro, "settings_intro")
 
-        # The key, the mode that key works in, and what that mode does: three
-        # properties of one thing, so one card.
+        self._build_card_hotkey(body, wrap)
+
+        cells = self._card_cells()
+        grid = tk.Frame(body, bg=colours.bg, bd=0, highlightthickness=0)
+        grid.pack(fill="x", padx=pad, pady=(theme.px(theme.SPACE), 0))
+        # `uniform` is what makes the columns the same width rather than the same
+        # weight: two cells that each ask for less than half the page would
+        # otherwise end up different sizes, which is the fault the packed columns
+        # had.
+        for index in range(self._layout.columns):
+            grid.grid_columnconfigure(index, weight=1, uniform="settings")
+
+        for key, cell in cells:
+            getattr(self, CARD_BUILDERS[key])(grid, cell, column)
+
+        # Nothing here until a setting has something to say, and an empty
+        # paragraph that reserves a line and two gaps is twenty pixels of the page
+        # spent on silence.
+        self._options_hint = self._hint(body, "", wrap, bg=colours.bg)
+        self._options_hint.pack_configure(padx=pad, pady=0)
+
+        self.set_devices(self._devices, self._device_choice)
+
+    def _card_cells(self) -> list[tuple[str, tuple[int, int, int]]]:
+        """Every visible card and where it goes, in the order it is drawn.
+
+        One (key, (row, column, span)) per card. The cards flow into the columns
+        in `order`, so changing the column count moves them rather than leaving
+        holes: six cards in three columns fills every row, and five in three
+        columns gives the last one the two cells a partner would have taken,
+        because a gap the width of a card reads as a mistake.
+
+        A layout that hides everything draws the first card rather than an empty
+        page. Hiding a card is a decision about the design, and a settings page
+        with nothing on it is not a design anybody asked for.
+        """
+        keys = [
+            key for key in self._layout.order
+            if key in CARD_BUILDERS and key not in self._layout.hidden
+        ]
+        if not keys:
+            log.warning("the layout hides every card, showing the first one")
+            keys = [next(iter(CARD_BUILDERS))]
+        columns = self._layout.columns
+        cells: list[tuple[str, tuple[int, int, int]]] = []
+        for position, key in enumerate(keys):
+            row, column = divmod(position, columns)
+            left = columns - column
+            span = left if position == len(keys) - 1 and left > 1 else 1
+            cells.append((key, (row, column, span)))
+        return cells
+
+    def _build_card_hotkey(self, body: tk.Misc, wrap: int) -> None:
+        """The dictation key and the mode it works in: one card, full width.
+
+        Built always and never rearranged. It is the setting the rest of the page
+        is about, and a hotkey field in a third of the width is a hotkey field
+        with a truncated combination in it.
+        """
+        colours = self._colours
+
         # The mode the key works in sits beside the card's title. It belongs to the
         # key — it is a property of how the combination acts, not of where the text
         # goes — and this card is the one thing on the page wide enough to hold
-        # both without either of them wrapping into three lines. In a column of
-        # its own it cost a hundred and thirty pixels and said the same thing in
-        # three.
+        # both without either of them wrapping into three lines.
         def toggle_beside(head: tk.Misc) -> widgets.Choice:
             self._toggle_check = widgets.Choice(
                 head, palette=colours, text=text.t("option_toggle"),
@@ -358,9 +583,7 @@ class Panel:
             )
             return self._toggle_check
 
-        hotkey = self._card(
-            body, "hotkey_label", first=True, aside=toggle_beside
-        )
+        hotkey = self._card(body, "hotkey_label", first=True, aside=toggle_beside)
         self._track(self._toggle_check, "option_toggle")
         row = tk.Frame(hotkey.inner, bg=colours.surface, bd=0, highlightthickness=0)
         row.pack(fill="x")
@@ -378,99 +601,97 @@ class Panel:
         self._hotkey_hint = self._hint(hotkey.inner, "hint_idle", wrap)
         self._toggle_hint = self._hint(hotkey.inner, "toggle_hint", wrap)
 
-        grid = tk.Frame(body, bg=colours.bg, bd=0, highlightthickness=0)
-        grid.pack(fill="x", padx=pad, pady=(theme.px(theme.SPACE), 0))
-        # `uniform` is what makes the columns the same width rather than the same
-        # weight: two cells that each ask for less than half the page would
-        # otherwise end up different sizes, which is the fault the packed columns
-        # had.
-        grid.grid_columnconfigure(0, weight=1, uniform="settings")
-        grid.grid_columnconfigure(1, weight=1, uniform="settings")
-
-        # What the words do when they are recognised, then when the app starts.
-        insertion = self._card(grid, "group_insertion", cell=(0, 0))
-        self._check(insertion.inner, "option_typing", self._live_typing,
+    def _build_card_insertion(self, grid: tk.Misc, cell, column: int) -> None:
+        """What the words do when they are recognised, and where they go."""
+        card = self._card(grid, "group_insertion", cell=cell)
+        self._check(card.inner, "option_typing", self._live_typing,
                     "set_live_typing", column)
-        self._check(insertion.inner, "option_clipboard", self._clipboard,
+        self._check(card.inner, "option_clipboard", self._clipboard,
                     "set_clipboard", column)
         self._correct_check = self._check(
-            insertion.inner, "option_corrections", self._correct_words,
+            card.inner, "option_corrections", self._correct_words,
             "set_correct_words", column, top_pad=theme.SPACE_SM,
         )
-        self._word_hint = self._hint(insertion.inner, "", column)
+        self._word_hint = self._hint(card.inner, "", column)
         # The check belongs to the switch above it, so it sits right under the
         # hint rather than in a group of its own with nothing else in it.
         self._check_words_button = widgets.Button(
-            insertion.inner, text=text.t("button_check_words"), palette=colours,
+            card.inner, text=text.t("button_check_words"), palette=self._colours,
             variant="secondary", command=self._check_words,
         )
         self._check_words_button.pack(anchor="w", pady=(theme.px(theme.SPACE), 0))
         self._track(self._check_words_button, "button_check_words")
 
-        # Where the words come from. The options are the names Windows gives the
-        # hardware, so this is the one card on the page whose contents this module
-        # cannot write down: it is filled from outside, in `set_devices`.
-        device = self._card(grid, "group_input", cell=(0, 1))
+    def _build_card_input(self, grid: tk.Misc, cell, column: int) -> None:
+        """Where the words come from.
+
+        The options are the names Windows gives the hardware, so this is the one
+        card whose contents this module cannot write down: it is filled from
+        outside, in `set_devices`.
+        """
+        card = self._card(grid, "group_input", cell=cell)
         self._device_box = tk.Frame(
-            device.inner, bg=colours.surface, bd=0, highlightthickness=0
+            card.inner, bg=self._colours.surface, bd=0, highlightthickness=0
         )
         self._device_box.pack(fill="x")
-        self._device_hint = self._hint(device.inner, "device_hint", column)
+        self._device_hint = self._hint(card.inner, "device_hint", column)
 
-        startup = self._card(grid, "group_startup", cell=(1, 0))
-        self._check(startup.inner, "option_autostart", self._autostart,
+    def _build_card_startup(self, grid: tk.Misc, cell, column: int) -> None:
+        """Whether Windows starts the app."""
+        card = self._card(grid, "group_startup", cell=cell)
+        self._check(card.inner, "option_autostart", self._autostart,
                     "set_autostart", column)
-        self._autostart_hint = self._hint(startup.inner, "autostart_hint", column)
+        self._autostart_hint = self._hint(card.inner, "autostart_hint", column)
 
-# The two cards that are about this panel rather than about dictation.
-        language = self._card(grid, "group_language", cell=(1, 1))
+    def _build_card_language(self, grid: tk.Misc, cell, column: int) -> None:
+        """The interface language: two options that each name themselves."""
+        card = self._card(grid, "group_language", cell=cell)
         languages = tk.Frame(
-            language.inner, bg=colours.surface, bd=0, highlightthickness=0
+            card.inner, bg=self._colours.surface, bd=0, highlightthickness=0
         )
         languages.pack(fill="x")
         # Endonyms, so each option reads correctly whichever language is active.
         for code in text.LANGUAGES:
             radio = widgets.Choice(
-                languages, palette=colours, kind="radio", text=text.name_of(code),
-                variable=self._language, command=self._pick_language, value=code,
+                languages, palette=self._colours, kind="radio",
+                text=text.name_of(code), variable=self._language,
+                command=self._pick_language, value=code,
             )
-            radio.pack(side="left", padx=(0, theme.px(theme.SPACE_LG)))
+            radio.pack(side="left", padx=(theme.px(theme.SPACE_LG)))
 
-        # A switch rather than two radios for the theme: there are two of them and
-        # one is what you are looking at now.
-        appearance = self._card(grid, "group_appearance", cell=(2, 0))
-        theme_row = tk.Frame(
-            appearance.inner, bg=colours.surface, bd=0, highlightthickness=0
-        )
+    def _build_card_appearance(self, grid: tk.Misc, cell, column: int) -> None:
+        """The theme.
+
+        Two themes is a switch and three is a choice, so the control follows the
+        number rather than the design: a hairline theme offers every theme it has
+        as its own radio, and a theme with a shadow keeps the switch it has always
+        had. `theme.THEME_NAMES` is where the names in this language live.
+        """
+        colours = self._colours
+        card = self._card(grid, "group_appearance", cell=cell)
+        theme_row = tk.Frame(card.inner, bg=colours.surface, bd=0,
+                             highlightthickness=0)
         theme_row.pack(fill="x")
-        self._dark_switch = widgets.Switch(
-            theme_row, palette=colours, variable=self._dark_var,
-            command=self._pick_theme,
-        )
-        self._dark_switch.pack(side="left", anchor="n")
-        self._dark_label = widgets.body(theme_row, palette=colours)
-        self._dark_label.configure(text=text.t("option_theme"))
-        self._dark_label.pack(side="left", padx=(theme.px(theme.SPACE), 0))
-        self._track(self._dark_label, "option_theme")
-        self._theme_hint = self._hint(appearance.inner, "theme_hint", column)
+        self._theme_var = tk.StringVar(value=self._theme_name)
+        for name in config.THEMES:
+            radio = widgets.Choice(
+                theme_row, palette=colours, kind="radio",
+                text=theme.theme_names().get(name, name),
+                variable=self._theme_var, command=self._pick_theme,
+                value=name, trailing=not colours.hairline,
+            )
+            radio.pack(fill="x", pady=(0, theme.px(theme.SPACE_XS)))
+        self._theme_hint = self._hint(card.inner, "theme_hint", column)
 
-        # Two switches, one card: they are two answers to the same question,
-        # which is how much of this machine the app leaves a trace on.
-        records = self._card(grid, "group_records", cell=(2, 1))
-        self._check(records.inner, "option_history", self._write_history,
+    def _build_card_records(self, grid: tk.Misc, cell, column: int) -> None:
+        """Two switches, one card: how much this machine keeps a trace on."""
+        card = self._card(grid, "group_records", cell=cell)
+        self._check(card.inner, "option_history", self._write_history,
                     "set_history", column)
-        self._hint(records.inner, "history_switch_hint", column)
-        self._check(records.inner, "option_log", self._write_log,
+        self._hint(card.inner, "history_switch_hint", column)
+        self._check(card.inner, "option_log", self._write_log,
                     "set_logging", column, top_pad=theme.SPACE_SM)
-        self._hint(records.inner, "log_switch_hint", column)
-
-        # Nothing here until a setting has something to say, and an empty
-        # paragraph that reserves a line and two gaps is twenty pixels of the page
-        # spent on silence.
-        self._options_hint = self._hint(body, "", wrap, bg=colours.bg)
-        self._options_hint.pack_configure(padx=pad, pady=0)
-
-        self.set_devices(self._devices, self._device_choice)
+        self._hint(card.inner, "log_switch_hint", column)
 
     def set_devices(
         self, devices: Sequence[tuple[str, bool]], selected: str | None
@@ -486,6 +707,12 @@ class Panel:
         The names are what Windows calls the hardware and do not translate, so
         this is also the one card a change of language rebuilds rather than
         repaints.
+
+        **One dropdown, not a list of radios.** A machine with a headset, a
+        monitor's microphone, two Realtek endpoints and a Bluetooth device has six
+        inputs, and six radio rows is most of the card and pushes the page's last
+        row off it. The field shows the chosen one in one line and the list is
+        there when it is wanted.
         """
         self._devices = list(devices)
         self._device_choice = selected
@@ -496,7 +723,7 @@ class Panel:
         known = {name for name, _ in self._devices}
         if selected and selected not in known:
             # Stored, and gone. The engine falls back to the automatic choice and
-            # says so in the log; the switch goes back to that rather than
+            # says so in the log; the field goes back to that rather than
             # pretending a device that is not there is in effect.
             log.info("the stored recording device %r is not connected", selected)
             self._device_choice = None
@@ -515,24 +742,50 @@ class Panel:
             # under it.
             empty.pack(fill="x", anchor="w")
             return
-        options: list[tuple[str, str]] = [("", text.t("device_auto"))]
-        options += [
-            (name, f"{name}{text.t('device_default_mark')}" if is_default else name)
+        # The value stored is the device **name**, and the first entry is the empty
+        # one — the system default — so "no name stored" and "system default" are
+        # the same value and need no second translation between them.
+        #
+        # The list the field shows holds the *labels*, which carry the «— default»
+        # mark and the translated first entry, so there are two vocabularies here:
+        # what the user reads and what the file holds. The join between them is
+        # `_device_names`, and it is why the field is given no variable of its own
+        # — bound to one, it would write a label into the very variable the app
+        # reads a name out of, and the stored device would come back as
+        # «Conexant HD Audio capture — по умолчанию» the next time it was read.
+        names = [""] + [name for name, _ in self._devices]
+        labels = [text.t("device_auto")] + [
+            f"{name}{text.t('device_default_mark')}" if is_default else name
             for name, is_default in self._devices
         ]
-        wraplength = max(160, self._column_width())
-        for value, label in options:
-            radio = widgets.Choice(
-                self._device_box, palette=self._colours, kind="radio", text=label,
-                variable=self._device_var, command=self._pick_device, value=value,
-                wraplength=wraplength,
+        self._device_names = tuple(names)
+        self._device_select = widgets.Select(
+            self._device_box, palette=self._colours,
+            values=labels,
+            index=names.index(self._device_choice or ""),
+            command=self._pick_device, width=self._column_width(),
+        )
+        self._device_select.pack(fill="x")
+        self._messages.append(
+            lambda: self._device_select.set_index(
+                self._device_names.index(self._device_choice or ""), fire=False
             )
-            radio.pack(fill="x", pady=(0, theme.px(theme.SPACE_XS)))
+        )
 
     def _pick_device(self) -> None:
-        """Hand the chosen device to the app, which owns the disk and the engine."""
-        chosen = self._device_var.get()
-        self._commands.put(("set_device", chosen or None))
+        """Hand the chosen device to the app, which owns the disk and the engine.
+
+        The list holds labels and the file holds names, so the name is looked up
+        through `_device_names` rather than read off the label — a device called
+        "…— по умолчанию" is not a device.
+        """
+        select = self._device_select
+        if select is None or not self._device_names:
+            return
+        name = self._device_names[min(select.index, len(self._device_names) - 1)]
+        self._device_choice = name or None
+        self._device_var.set(name)
+        self._commands.put(("set_device", name or None))
 
     def _build_history(self, parent: widgets.Scroller) -> None:
         """The tab as three lines of prose and a list of records.
@@ -637,9 +890,9 @@ class Panel:
         # just taken out of the layout **packs it again** — and it packs it with
         # whatever width it happens to have at that moment, which is the width of
         # its longest word rather than the width of the page. That is the second
-        # half of the vertical text on this tab, and the half that survived the
-        # width guards: the empty state and the recording-off note both reappear,
-        # one letter per line, in the middle of a list that has records in it. The
+        # half of the vertical text on this tab: the empty state and the
+        # recording-off note both reappear, one letter per line, in the middle of
+        # the list, every time the tab is filled with records it actually has. The
         # padding they need was given when they were built.
         self._history_empty.show(not entries)
         self._history_note.show(not self._write_history.get())
@@ -649,16 +902,18 @@ class Panel:
     def _card(self, parent: tk.Misc, key: str, padx: int = 0,
               first: bool = False,
               aside: Callable[[tk.Misc], tk.Misc] | None = None,
-              cell: tuple[int, int] | None = None) -> widgets.Card:
+              cell: tuple[int, int, int] | None = None) -> widgets.Card:
         """A card with its own title, which a language change repaints in place.
 
         `first` is the top card of a packed run, which is already spaced from
         whatever is above it by the row's own padding: giving it the gap as well
-        is twenty pixels of nothing, and the settings tab has six cards.
+        is twenty pixels of nothing.
 
-        `cell` is (row, column) in a `grid` instead, where the row is as tall as
-        its tallest cell and both cards are stretched to it — which is the whole
-        reason the six cards are in a grid rather than in two packed columns.
+        `cell` is (row, column, span) in a `grid` instead, where the row is as
+        tall as its tallest cell and every card in it is stretched to that height
+        — which is the whole reason the cards are in a grid rather than in packed
+        columns. A `span` above one is the last card of a row that has no partner,
+        taking the cells a partner would have had.
         """
         card = widgets.Card(
             parent, palette=self._colours, padding=theme.SPACE
@@ -669,9 +924,9 @@ class Panel:
                 pady=(0 if first else theme.px(theme.SPACE), 0),
             )
         else:
-            row, column = cell
+            row, column, span = cell
             card.grid(
-                row=row, column=column, sticky="nsew",
+                row=row, column=column, columnspan=span, sticky="nsew",
                 padx=((0, theme.px(theme.SPACE_SM)) if column == 0 else (0, 0)),
                 pady=(0, theme.px(theme.SPACE)),
             )
@@ -682,21 +937,52 @@ class Panel:
         # on a widget that nothing manages yet is silently a no-op. Both look like
         # they worked until the next relayout.
         if aside is None:
-            title = widgets.heading(card.inner, palette=self._colours)
-            title.configure(text=text.t(key))
+            title = self._card_title(card.inner, key)
+            title.configure(text=self._title_text(key))
             title.pack(fill="x", pady=(0, theme.px(theme.SPACE_SM)))
         else:
             head = tk.Frame(card.inner, bg=self._colours.surface, bd=0,
                             highlightthickness=0)
             head.pack(fill="x", pady=(0, theme.px(theme.SPACE_SM)))
-            title = widgets.heading(head, palette=self._colours)
-            title.configure(text=text.t(key))
+            title = self._card_title(head, key)
+            title.configure(text=self._title_text(key))
             title.pack(side="left")
             aside(head).pack(
                 side="right", anchor="n", padx=(theme.px(theme.SPACE_MD), 0)
             )
-        self._track(title, key)
+        # Not `_track`: the case is the theme's, so the repaint has to go through
+        # the same decision the first paint did.
+        self._messages.append(
+            lambda w=title, k=key: w.configure(text=self._title_text(k))
+        )
         return card
+
+    def _title_text(self, key: str) -> str:
+        """A card's heading, in the case this theme sets headings in.
+
+        The studio design sets a group heading in small capitals; the first two
+        themes set them as written. The capitalisation happens here and not in
+        `winvosk.text`, because the message table holds one string per language and
+        that string is what `--vocab-check`, the language probe and both guides
+        match against. Uppercasing it there would make the table lie about what the
+        panel says in order to change how it looks.
+        """
+        label = text.t(key)
+        return label.upper() if self._colours.hairline else label
+
+    def _card_title(self, parent: tk.Misc, key: str) -> tk.Label:
+        """A card's heading, in whichever face this theme sets headings in.
+
+        The studio design sets a group heading in small monospace capitals and
+        every control label below it in the interface face; the first two themes
+        set both in the interface face, because that is the design they are. The
+        choice is the theme's because a heading is part of what a theme *is*, and
+        asking it here rather than in `widgets` keeps the decision in one place
+        instead of in every card.
+        """
+        if self._colours.hairline:
+            return widgets.title_label(parent, palette=self._colours)
+        return widgets.heading(parent, palette=self._colours)
 
     def check_settings_reachable(self) -> str:
         """Prove that the bottom of the settings tab can be reached, and report how.
@@ -725,6 +1011,13 @@ class Panel:
         self._root.update_idletasks()
         bottom = self._options_hint.winfo_rooty() + self._options_hint.winfo_height()
         edge = canvas.winfo_rooty() + canvas.winfo_height()
+        # Both numbers above were taken with the page at its end, which is the
+        # only view in which the last line can be inside the window at all. Put
+        # the page back before answering: a check that leaves the tab scrolled to
+        # its end is a check that has changed the state it inspected, and the
+        # settings tab then opens in the middle. The numbers are already captured,
+        # so scrolling here cannot move them.
+        page.to_top()
         if bottom > edge + 1:
             raise AssertionError(
                 f"the bottom of the settings tab is unreachable: the last line "
@@ -797,6 +1090,9 @@ class Panel:
         last = rows[-1] if rows else self._history_empty
         bottom = last.winfo_rooty() + last.winfo_height()
         edge = canvas.winfo_rooty() + canvas.winfo_height()
+        # Captured at the end, restored before answering: see the note in
+        # `check_settings_reachable`.
+        page.to_top()
         if bottom > edge + 1:
             raise AssertionError(
                 f"the last record is unreachable: the list ends at {bottom} and "
@@ -825,9 +1121,14 @@ class Panel:
         self, parent: tk.Misc, key: str, variable: tk.BooleanVar, command: str,
         wrap: int, top_pad: int = 0,
     ) -> widgets.Choice:
+        # A settings row is a name on the left and the control that changes it on
+        # the right; a checkbox with its label beside it is a list of checkboxes.
+        # The themes that are a hairline theme draw the row, the themes with a
+        # shadow draw the list, and this is the one line that tells them apart.
         check = widgets.Choice(
             parent, palette=self._colours, text=text.t(key), variable=variable,
             command=lambda: self._toggle(command, variable), wraplength=wrap,
+            trailing=self._colours.hairline,
         )
         check.pack(fill="x", pady=(theme.px(top_pad), 0))
         self._track(check, key)
@@ -843,19 +1144,21 @@ class Panel:
         inset += theme.px(theme.SHADOW_BLUR) + theme.px(theme.SPACE_SM)
         return max(160, WIDTH - inset * 2)
 
-    def _column_width(self) -> int:
+    def _column_width(self, columns: int | None = None) -> int:
         """The width a paragraph gets inside one column of the settings tab.
 
-        Half the window, less the page's own padding, less the gap between the
-        columns and less what a card takes off its own content for its padding
-        and its shadow. Kept as an arithmetic expression of the same tokens the
-        layout is built from, so a change to the window width or to the spacing
-        scale moves both at once rather than leaving a number behind.
+        The page less its own padding, less the gaps between the columns and less
+        what a card takes off its own content for its padding and its shadow,
+        divided by however many columns the layout asks for. Kept as an arithmetic
+        expression of the same tokens the layout is built from, so a change to the
+        window width, to the column count or to the spacing scale moves all of it
+        at once rather than leaving a number behind.
         """
-        gap = theme.px(theme.SPACE_LG)
+        count = max(1, columns if columns is not None else self._layout.columns)
+        gap = theme.px(theme.SPACE_LG) * (count - 1)
         inset = theme.px(theme.SPACE_XL) + theme.px(theme.SPACE_MD)
         inset += theme.px(theme.SHADOW_BLUR) + theme.px(theme.SPACE_SM)
-        return max(160, (WIDTH - gap) // 2 - inset)
+        return max(160, (WIDTH - gap - theme.px(theme.SPACE_SM)) // count - inset)
 
     # Language, theme and state.
 
@@ -923,10 +1226,8 @@ class Panel:
         screen and the microphone is not interrupted.
         """
         if name not in theme.THEMES:
-            self._dark_var.set(theme.is_dark(self._theme_name))
             return
         if name == self._theme_name:
-            self._dark_var.set(theme.is_dark(name))
             return
         self._theme_name = name
         self._colours = theme.palette(name)
@@ -948,11 +1249,17 @@ class Panel:
         self._restore()
         self._root.title(self._title())
         self._dress_window()
+        # The chip is not part of the tree that was just thrown away, so it is
+        # told separately. Without this it would keep the colours of the theme
+        # the panel was built in, and a recording started after a theme change
+        # would show amber bars on a white plate.
+        self._overlay.set_theme(name)
 
     def _restore(self) -> None:
         """Put back everything a rebuild threw away, from the fields above."""
         self._notebook.select(0)
-        self._dark_var.set(theme.is_dark(self._theme_name))
+        if self._theme_var is not None:
+            self._theme_var.set(self._theme_name)
         self._toggle_check.set(self._toggle)
         self._autostart.set(bool(self._autostart.get()))
         self.set_word_count(self._word_count)
@@ -967,10 +1274,16 @@ class Panel:
             self.set_hotkey(self._hotkey_text)
 
     def _pick_theme(self) -> None:
-        """Hand the theme to the app, which owns the disk."""
-        self._commands.put(
-            ("set_theme", theme.DARK.name if self._dark_var.get() else theme.LIGHT.name)
-        )
+        """Hand the theme to the app, which owns the disk.
+
+        There was a switch here for a two-theme build and a group of radios for a
+        three-theme one, and both had to end in this command because it cannot tell
+        which control sent it. Only the group is left: `config.THEMES` has three
+        names in it and that is what ships, so the switch was a second control for a
+        configuration nobody has, and its label was a string the user guide then had
+        to document in two languages for a button that never appears.
+        """
+        self._commands.put(("set_theme", self._theme_var.get()))
 
     def _pick_toggle(self) -> None:
         """Hand the mode to the app, which owns the disk and the listener."""
@@ -1210,18 +1523,28 @@ class Panel:
         self._toast.show(message, error=error)
 
     def set_word_count(self, count: int) -> None:
-        """Say how many words the correction pass has to work with."""
+        """Say how many words the correction pass has to work with.
+
+        The two widgets it paints belong to the "Where the text goes" card, and a
+        layout is allowed to hide that card: the count is still held, so putting
+        the card back shows the right number, and a card that is not on the page is
+        not an error from here.
+        """
         self._word_count = count
-        self._correct_check.configure(
-            text=text.t("option_corrections" if count else "option_corrections_empty")
-        )
-        self._word_hint.configure(
-            text="" if count else text.t("words_empty_hint")
-        )
+        if self._correct_check is not None:
+            self._correct_check.configure(
+                text=text.t("option_corrections" if count
+                            else "option_corrections_empty")
+            )
+        if self._word_hint is not None:
+            self._word_hint.configure(
+                text="" if count else text.t("words_empty_hint")
+            )
 
     def set_checking_words(self, running: bool) -> None:
         """The check owns the model for a couple of seconds, so it is held down."""
-        self._check_words_button.set_enabled(not running)
+        if self._check_words_button is not None:
+            self._check_words_button.set_enabled(not running)
         if running:
             self.set_option_hint(text.t("words_check_hint"))
 

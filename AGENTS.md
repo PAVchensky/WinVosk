@@ -1,4 +1,4 @@
-# WinVosk
+﻿# WinVosk
 
 Offline Russian dictation for Windows. Global hotkey, tray icon, always-on-top
 panel, and the recognised text is typed into the window you were typing in.
@@ -21,7 +21,7 @@ repository.
 ## Release
 
 `VERSION` in `src\winvosk\config.py` is the single source of the release number,
-currently **1.8.2**. It is not a comment and not a tag nobody reads: `--diagnose`
+currently **1.9.1**. It is not a comment and not a tag nobody reads: `--diagnose`
 prints it on its first line, the panel puts it in the window title, and the
 own-word report and the frozen `--diagnose` dialog carry it.
 `winvosk\__init__.py` derives `__version__` from it rather than repeating it —
@@ -169,7 +169,7 @@ Get-Content .\logs\<yyyy-mm-dd>.txt -Encoding UTF8 -Tail 5
 Check 2 must print a `base dir` line that is the checkout root, currently
 `base dir    : D:\AI\Vosk`; anything else means the app resolved paths somewhere
 else and the rest of the bar is meaningless. Its first line must be
-`WinVosk   : 1.8.2`, which is the cheap way to notice that `VERSION` was not bumped.
+`WinVosk   : 1.9.1`, which is the cheap way to notice that `VERSION` was not bumped.
 
 Check 3 must print an empty string for silence, never raise. Check 4 must print
 `VERDICT: PASS` twice: once for the hotkey, once for typing, the latter with
@@ -253,6 +253,17 @@ ships in Russian, and once said a word *more* than 0.75 similar is left alone,
 which is the opposite of what `corrector.CUTOFF` does. Run it after any change to
 `README.md`, `README.ru.md`, `docs\HOWTO.md`, `text.py`, `corrector.py` or
 `config.LANGUAGE_DEFAULT`.
+`tools\chip_probe.py` is the eleventh: it needs a Tk window but no keyboard, no
+microphone and no model, and it covers the chip and the tab scroll — that the bar
+ramp, the clock and the plate are the `chip_*` roles of the current
+`theme.Palette` in every theme, that the plate stays dark in all of them, that the
+transparent key is a few steps from the plate's fill and is not a colour the chip
+paints, that the window really is keyed on it, that `set_theme` recolours a chip
+that is already on screen without rebuilding the window under a running recording,
+and that a scrolled settings or history tab comes back to its first line and that
+`check_*_reachable` puts each page back where it found it. Run it after any change
+to `overlay.py`, to the `chip_*` roles in `theme.py`, to `Scroller`, or to the
+tab selection in `panel.py`.
 
 ## Invariants worth keeping
 

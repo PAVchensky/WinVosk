@@ -34,7 +34,7 @@ Start it with `WinVosk.bat`, or let Windows start it on login.
 | Record on press instead of hold | panel → **Settings** → **Toggle recording** |
 | Choose the microphone | panel → **Settings** → **Recording device**, see [Recording device](#recording-device) |
 | Type or not, clipboard, autostart | panel → **Settings** tab, see [Where the text goes](#where-the-text-goes) |
-| Light or dark | panel → **Settings** → **Dark theme**, see [Appearance](#appearance) |
+| Pick the theme | panel → **Settings** → **Appearance**, see [Appearance](#appearance) |
 | Resize the panel | drag any edge or corner of the window |
 | Teach it your own words | put them in `phrases.txt`, see [Custom vocabulary](#custom-vocabulary) |
 | Quit | tray menu → **Quit** |
@@ -127,14 +127,23 @@ and the release of the hotkey is ignored entirely in that mode.
 ### The recording chip
 
 While a recording runs, a dark chip sits horizontally centred on the work area,
-16 px above the taskbar: eleven thin pink bars across a 20 px field at the top,
-and the elapsed time as `M:SS` centred underneath. It is 87x35 — one canvas
-carrying canvas rectangles for the bars over a single cached image for the
-plate, drawn at `_PLATE_SCALE` times the size and folded back down, so there is
-no image file on disk and no new dependency. Its position comes from the real
-work area rather than from the screen size, so it stays correct with the taskbar
-on any edge or auto-hidden, and it is well clear of the panel's own bottom right
-corner.
+16 px above the taskbar: eleven thin bars across a 20 px field at the top, and the
+elapsed time as `M:SS` centred underneath. It is 87x35 — one canvas carrying canvas
+rectangles for the bars over a single cached image for the plate, drawn at
+`_PLATE_SCALE` times the size and folded back down, so there is no image file on
+disk and no new dependency. Its position comes from the real work area rather than
+from the screen size, so it stays correct with the taskbar on any edge or
+auto-hidden, and it is well clear of the panel's own bottom right corner.
+
+The chip's plate, rim, bar ramp and clock colour are the `chip_*` roles of the
+current `theme.Palette`, so the chip is in the theme's accent rather than a colour
+of its own: amber on the studio theme, indigo on light and dark. One thing does not
+follow the theme, and cannot. The plate stays dark in every theme, because the chip
+floats over whatever the user is typing into and a white chip on a white page is
+the one thing a recording indicator cannot be. A theme change repaints the chip
+that is already on screen — new plate, new ramp, new clock — without rebuilding
+the window, so changing the theme in the middle of a recording leaves the recording
+alone. `RecordingOverlay.set_theme` is that path.
 
 The bars are an animation, not a reading. The microphone really is measured:
 the engine splits every half second of audio into sixteen sub-frames, takes the
@@ -146,7 +155,7 @@ Below the gate every bar settles onto the same small height; above it they jump
 about, never together, because each has its own rate and phase.
 
 The row is shaped like a bell. Every bar straddles the vertical centre of the
-field and grows upward and downward at once, in three bands of one pink ramp —
+field and grows upward and downward at once, in three bands of one theme ramp —
 a darker core with brighter bands towards its two outer edges, so the ramp
 reads the same whichever way it is read. The middle bars reach furthest and the
 outer ones least, in the proportion 5.00, 6.76, 11.00, 15.24, 17.00, 15.24,
@@ -162,12 +171,30 @@ them but never cross it. Falling back to the idle height takes about a second.
 The rounded corners are genuinely antialiased, because Tk does not draw them.
 The plate is rendered whole by Pillow at four times the size and brought back
 down with a box average, which blends the boundary into pixels, and everything
-outside the rounded shape is left in one colour used nowhere else. That colour
-is declared transparent to the window manager, so it is cut out as a clean hole
-and the blends along its rim read as a smooth edge. Square corners are one
+outside the rounded shape is left in one colour that is declared transparent to
+the window manager, so it is cut out as a clean hole. Square corners are one
 constant away — `CORNER` at 0 in `src\winvosk\overlay.py`. The pixels
 outside the rounded shape stay transparent to clicks, so a click just beyond
 the edge falls through to whatever is under the chip.
+
+That transparent colour is derived from the plate rather than picked on its own,
+and the reason is a hole in the eye rather than a hole in the window. A colour key
+cuts by exact match, so every pixel of the antialiased rim — which is a blend
+between the key and the plate — survives on screen as itself. With a key chosen to
+be a colour nothing else used, which is what this one used to be, that blend is a
+ring of blue dots around the contour of every theme. So `overlay.chip_key` takes
+the plate's own fill and steps it down `KEY_STEP` steps, three, in each channel:
+about 1.2 percent, which is not a colour anyone can see. The blends along the rim
+then land between the plate and something indistinguishable from the plate. The
+trade is deliberate and is stated in the function: a colour key cannot do a soft
+edge without showing its own colour in it, so the soft edge becomes a hard one and
+the rounding, which is the part that reads as a chip, stays. `chip_key` also
+refuses to return a colour the chip paints or a colour it cannot step away from,
+because either would punch the plate itself out instead of the corner.
+
+`tools\chip_probe.py` is what holds all of that down, along with the claim that a
+visible chip carries the theme's colours and that a theme change does not rebuild
+the window underneath a running recording.
 
 Pillow is the one call on the run-time path, so it is not allowed to be able to
 stop the app. If the plate cannot be drawn, the chip writes a single `ERROR`
@@ -289,8 +316,10 @@ Vosk\                             the checkout folder, the project itself is Win
 │       ├── keystrokes.py      text typed with KEYEVENTF_UNICODE keystrokes
 │       ├── vocabulary.py      phrase file loader and vocabulary check
 │       ├── panel.py           always-on-top Tk panel, three tabs
-    │       ├── theme.py           palettes, spacing and type scales, window dressing
-    │       ├── widgets.py         the panel's own widgets: cards, buttons, switches
+    │       ├── theme.py           palettes, spacing and type scales, window dressing,
+    │       │                      bundled fonts
+    │       ├── widgets.py         the panel's own widgets: cards, buttons, switches,
+    │       │                      the device dropdown
     │       ├── overlay.py         recording chip: eleven bars over an elapsed clock
 │       ├── settings.py        settings.json: hotkey, switches, atomic write
 │       ├── corrector.py       own-word correction after the decode
@@ -311,8 +340,11 @@ Vosk\                             the checkout folder, the project itself is Win
 │   ├── history_probe.py      headless check of the history reader and the gate
 │   ├── correct_probe.py      headless check of the own-word correction rules
 │   ├── lang_probe.py        headless check of the message table and the language
+│   ├── chip_probe.py         the chip's colours, its colour key, and the tab scroll
+│   ├── overlay_tune.py       tunes the chip's geometry against a live preview
 │   ├── build_exe.py          builds dist\WinVosk\, see below
 ├── phrases.txt               optional list of your own words, see below
+├── fonts\                    Space Grotesk and JetBrains Mono, with their licences
 ├── settings.json             written by the Настройки tab, see below
 ├── WinVosk.bat               launcher, resolves everything from %~dp0
 ├── WinVosk.spec              PyInstaller build definition
@@ -574,6 +606,9 @@ have to be out of the way before a probe can assert on focus.
 # message table and the language switch: no GUI, no microphone, no model
 .\.venv\Scripts\python.exe .\tools\lang_probe.py
 
+# the chip's palette, its colour key and the settings tab's scroll position
+.\.venv\Scripts\python.exe .\tools\chip_probe.py
+
 # which of your own words the model can hear
 .\.venv\Scripts\python.exe .\src\run.py --vocab-check
 ```
@@ -590,6 +625,25 @@ Four probes are pure logic: they need no keyboard, no microphone, no model and
 no GUI, and they run unattended in a fraction of a second.
 `settings_probe.py`, `history_probe.py`, `correct_probe.py` and `lang_probe.py`
 print `VERDICT: PASS` or `VERDICT: FAIL`.
+
+`chip_probe.py` needs a Tk window but no keyboard, no microphone and no model. It
+builds the real panel three times, once per theme, and asserts that the bar ramp
+and the clock are the `chip_*` roles of that theme's palette, that the plate stays
+dark in all three, that the transparent key is a few steps from the plate and is
+not a colour the chip paints, that the window really is keyed on it, and that
+`set_theme` recolours a chip that is already on screen without rebuilding the
+window underneath it. It then scrolls the settings tab to the end and asserts that
+opening it again brings it back to the first line, and that
+`check_settings_reachable` and `check_history_reachable` put each page back where
+they found it. Print one line per check and a count; a failure is an assertion with
+the two colours in it rather than a word.
+
+`overlay_tune.py` is the chip's own instrument rather than a check: it drives a live
+preview with a scripted or a real microphone and writes geometry changes back into
+`overlay.py`. It tunes geometry, amplitude and movement only — the colours are the
+`chip_*` roles of three palettes and belong in `theme.py` next to the palette they
+are for, and the clock's typeface is `theme.mono(CLOCK_SIZE)`. `--self-test` proves
+the arithmetic and the source writer and prints `VERDICT: PASS` or `FAIL`.
 
 `settings_probe.py` checks the hotkey plumbing and the file: that every key the
 capture can be given has a name and that the name round trips through the
@@ -636,11 +690,20 @@ what is answered.
 The panel has three tabs. **Dictation** is the transcription itself, unchanged.
 **Settings** holds the combination that starts a recording, three switches — where
 the text goes, whether it also lands in the clipboard, whether your own words are
-corrected — the recording device, whether Windows starts the app, the light or dark
-theme, the language, and the two switches that say how much is written to disk.
+corrected — the recording device, whether Windows starts the app, the theme, the
+language, and the two switches that say how much is written to disk.
 **History** lists the last ten finished sessions and copies one to the clipboard.
 Everything on the settings tab is written at once, on the click, and is in force
 immediately.
+
+The settings tab always opens at its first line, whichever tab it was left on.
+A canvas keeps its view, so without that the tab came back wherever the last walk
+to its end had put it — the middle of the page, with the first card off screen.
+`Scroller.to_top` moves by whole pages until the view stops moving, which cannot be
+off by a scroll region that has not been measured yet, and `Panel._on_tab` calls it
+on both scrolling pages. The checks that walk a page to its end put it back where
+they found it, because a check that leaves the tab scrolled is a check that has
+changed the state it inspected.
 
 The settings tab is laid out as one card across the top and a **grid** of six below
 it, three rows of two, rather than as two packed columns. That is a change of
@@ -698,13 +761,23 @@ holds. The switch is never left showing something that is not in effect.
 
 ### Recording device
 
-**Recording device** lists everything `recognizer.input_devices()` can see, with the
-one a host API calls default marked, and the first entry — **System default** — is
-the app's own automatic choice. Choosing one of the others puts that **name** into
-`settings.json` as `input_device` and hands it to `DictationEngine.replace_device`,
-which takes effect from the next recording: a recording already running keeps the
-device it started with, because swapping the microphone out from under a half-heard
-sentence is worse than that one sentence taking the old one.
+**Recording device** is a dropdown listing everything `recognizer.input_devices()`
+can see, with the one a host API calls default marked, and the first entry —
+**System default** — is the app's own automatic choice. Choosing one of the others
+puts that **name** into `settings.json` as `input_device` and hands it to
+`DictationEngine.replace_device`, which takes effect from the next recording: a
+recording already running keeps the device it started with, because swapping the
+microphone out from under a half-heard sentence is worse than that one sentence
+taking the old one.
+
+The dropdown is this project's own `widgets.Select`, not a `ttk.Combobox`, for two
+reasons. A combobox draws its button and its open list from the `ttk` theme, which
+on Windows is `clam` — so the control would be a square grey box in a panel that has
+no grey boxes — and a control that opens a window of its own cannot be captured in
+a screenshot of the panel, which is how the open state gets looked at at all. It
+shows at most six rows and scrolls beyond them, takes the wheel, and closes on a
+click outside or on `Esc` without a `grab_set`, which would freeze the pump that
+draws it.
 
 Two things about this card are unlike the others on the page, and both are
 consequences of what it lists. It is filled from outside — `App` asks
@@ -713,6 +786,13 @@ consequences of what it lists. It is filled from outside — `App` asks
 with no audio hardware at all. And its labels are the names Windows gives the
 hardware, so they do not translate: a change of language rebuilds this card rather
 than repainting it, and `text.LANGUAGES` endonyms cannot help.
+
+The list shows *labels* and the file stores *names*, and they are different
+strings: the label for a default device carries a suffix, the name does not.
+Binding the control to the `StringVar` that holds the device name would therefore
+have written the label into the very variable the app reads the name out of. So the
+dropdown is given no variable at all, and `Panel._device_names` is the one place
+that knows both vocabularies: an index goes in, a name comes out.
 
 A device that cannot be opened — a headset asleep in the tray, a device Windows has
 renumbered, another program holding the handle — is an ordinary state rather than
@@ -723,14 +803,45 @@ recording.
 
 ### Appearance
 
-**Dark theme** repaints the panel, the recording chip and the tray icon in the
-other palette. It is the one setting that rebuilds the page rather than
-reconfiguring it — every widget is destroyed and made again, which is why
-`set_theme` is the only language- or theme-shaped change that has to restore the
-transcript, the recording state and the switch positions by hand. The stored
-value is a plain string, `light` or `dark`, checked against `config.THEMES`
-rather than accepted as anything: an unknown name falls back to
-`config.THEME_DEFAULT`, which is `light`.
+**Theme** repaints the panel, the recording chip and the tray icon in the chosen
+palette. It is the one setting that rebuilds the page rather than reconfiguring it —
+every widget is destroyed and made again, which is why `set_theme` is the only
+language- or theme-shaped change that has to restore the transcript, the recording
+state and the switch positions by hand. The chip is outside that tree and is told
+separately, in place, so a recording running through a theme change is not
+interrupted. The stored value is a plain string — `studio`, `light` or `dark` —
+checked against `config.THEMES` rather than accepted as anything: an unknown name
+falls back to `config.THEME_DEFAULT`, which is `studio` as of 1.9.0. A file that
+already says `light` or `dark` keeps that panel; the default only decides what a
+machine that has never chosen anything gets.
+
+Three themes, and what distinguishes them is two flags on `theme.Palette` rather
+than three separate code paths. `dark` says which way the window's title bar and
+the ttk widgets are dressed, and `hairline` says a card's border is a one pixel
+rule in the theme's own line colour instead of a shadow: a shadow is what a light
+page needs to lift a white card off it, and what a warm near-black page does not —
+the studio theme reads as a set of hairline boxes on black, which is the design the
+page was drawn in. The chip's plate ignores both, on purpose: it is dark in every
+theme.
+
+### Typefaces
+
+`theme.bind` calls `theme.load_fonts` before it resolves the families, because a
+font that is not registered is not in the list Tk hands back. Each of the six files
+in `fonts\` is handed to `AddFontResourceExW` with `FR_PRIVATE`, so they are
+registered with this process and nothing else: no font is added to Windows, no
+other program sees them, and the machine's own Segoe UI and Cascadia Mono are still
+there for anything that asks. Every failure is survivable — a missing folder, a
+missing file, a Windows that refuses — and each is one `INFO` line, after which the
+stack falls through to whatever the machine actually has. `--diagnose` prints the
+resolved pair, the dpi and how many files were registered, which is the cheap way
+to tell which of the two cases you are in.
+
+The fonts travel in the bundle as `fonts\` next to the exe rather than inside
+`_internal\`, the same place `models\` goes and for the same reason: that is
+`config.BASE_DIR`, so `config.FONTS_DIR` is one expression rather than a rule about
+where PyInstaller puts data, and the OFL text sits beside the files it covers.
+`tools\build_exe.py` copies them and refuses to finish a build that has none.
 
 ### Language
 

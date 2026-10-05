@@ -11,12 +11,15 @@ The microphone level is not displayed. It is gated into silence or sound and
 used to drive an animation, so the chip shows that something is being said
 without ever claiming to measure how loudly it is said.
 
-Its colours are its own and deliberately do not follow the theme: a dark plate
-with a pink ramp, the same in the light panel and in the dark one. It sits over
-whatever the user is typing into, on any wallpaper, in front of any document, and
-a chip that recoloured itself with the panel would be a chip that is sometimes
-nearly invisible. One appearance, always the same, is what makes it readable as
-"recording" at a glance rather than as another piece of interface.
+Its colours come from the theme, with one exception that is not negotiable: the
+**plate is dark in every theme**. It sits over whatever the user is typing into,
+on any wallpaper, in front of any document, and a white plate is invisible on a
+white page — which is the one thing a recording indicator cannot be. So the plate
+and its rim are dark wherever they are, and everything on the plate — the five
+bars and the clock — is the theme's accent, which is what makes the chip read as
+part of the panel instead of as a pink object that landed on it. The studio theme
+puts amber bars on a warm near-black plate, which is the project's own banner
+palette; the light and dark themes put their indigo on a neutral dark plate.
 
 It sits horizontally centred at the bottom of the work area, which is where the
 eye already goes for a taskbar chip, and it is kept clear of the panel's own
@@ -115,20 +118,76 @@ WOBBLE_STEP = 0.45
 # Phases start spread out, so the row is out of step even on the first frame.
 PHASE_SPREAD = 2
 
-# A colour used nowhere else, made transparent by the window manager: whatever
-# the plate leaves in it simply is not on the screen, which is how the chip gets
-# rounded corners.
-_COLOR_KEY = '#0000fe'
-_BACKGROUND = '#2b2b2b'
-_BORDER = '#454545'
-_BAR_LOW = '#7d2f4f'
-_BAR_MID = '#c9527f'
-_BAR_HIGH = '#ff8ab8'
-_CLOCK = '#e9b8cd'
+# How far below the plate the transparent key sits, in 8 bit steps per channel.
+# Three is 1.2 percent: enough for the rim's blends to stay clear of the plate
+# fill, and far below the point where a colour can be told from another.
+KEY_STEP = 3
+# Used only for a plate dark enough that KEY_STEP would walk off the bottom of
+# the scale. Nothing the chip paints is anywhere near it.
+_FALLBACK_KEY = '#0000fe'
+
+
+def chip_key(palette: str | None = None) -> str:
+    """The colour the window manager is told to make transparent, for one theme.
+
+    `-transparentcolor` cuts a hole by exact match, and the hole is what makes
+    the chip's rounded shape possible at all - but it also means every pixel of
+    the antialiased rim, which is a blend between the key and the plate, survives
+    as itself. With a key chosen to be a colour nothing else uses, which is what
+    this one used to be, that blend is a ring of blue dots around the contour.
+
+    So the key is derived from the plate instead: a few steps darker than the
+    plate's own fill, in every channel, which is about two and a half percent of
+    a step the eye cannot separate from the plate. The blends along the rim then
+    land between the plate and something indistinguishable from the plate, the
+    pure key still punches the hole outside the shape, and the rim is invisible
+    whatever the theme is. The trade is deliberate: the soft edge becomes a hard
+    one, because a colour key cannot do soft edges without showing its own
+    colour in them. Rounded still, which is the shape that matters.
+
+    Two rules keep it safe. The key must not equal the plate fill, or the plate
+    itself becomes the hole; and it must not equal any other colour the chip
+    paints, or that part of the chip disappears instead. Both are checked here
+    rather than assumed, because a palette is editable and this is derived from
+    it.
+    """
+    surface, rim, low, mid, high, clock = chip_colours(palette)
+    red, green, blue = theme.rgb(surface)
+    stepped = tuple(max(0, channel - KEY_STEP) for channel in (red, green, blue))
+    if stepped == (red, green, blue):
+        stepped = tuple(min(255, channel + KEY_STEP) for channel in (red, green, blue))
+    key = '#%02x%02x%02x' % stepped
+    painted = {surface.lower(), rim.lower(), low.lower(), mid.lower(),
+               high.lower(), clock.lower()}
+    if key in painted or key == surface.lower():
+        # A plate this close to the end of the scale leaves nowhere to stand.
+        # Nothing this window paints is anywhere near a magenta, so it is as
+        # safe a key as the original one was.
+        return _FALLBACK_KEY
+    return key
+
+
 # The clock's size. Public because `tools/make_images.py` draws the same glyph
 # into the README images: a size written in two places is a size that will be
 # right in only one of them.
 CLOCK_SIZE = 7
+
+
+def chip_colours(
+    palette: str | None = None,
+) -> tuple[str, str, str, str, str, str]:
+    """The chip's six colours for one theme: plate, rim, low, mid, high, clock.
+
+    Read straight out of the palette rather than written here, so a theme is
+    defined in one place and the chip cannot end up a colour nothing else in
+    the app is. None means the app's default theme.
+    """
+    colours = theme.palette(palette)
+    return (
+        colours.chip_surface, colours.chip_border,
+        colours.chip_bar_low, colours.chip_bar_mid, colours.chip_bar_high,
+        colours.chip_clock,
+    )
 
 # Plate layers, outermost first: the fill reaches the antialiased edge so the
 # soft boundary blends with the plate itself, the subtle border sits a pixel
@@ -140,7 +199,17 @@ CLOCK_SIZE = 7
 # a fraction of a percent towards the colour key.
 _PLATE_SCALE = 4
 _PLATE_RESAMPLE = Image.Resampling.BOX
-_PLATE_LAYERS = ((0, _BACKGROUND), (1, _BORDER), (2, _BACKGROUND))
+
+
+def plate_layers(palette: str | None = None) -> tuple[tuple[int, str], ...]:
+    """The plate's layers, outermost first, for one theme.
+
+    The fill reaches the antialiased edge so the soft boundary blends with the
+    plate itself, the subtle rim sits a pixel inside it, and the fill returns
+    for everything the rim did not cover.
+    """
+    surface, rim, *_ = chip_colours(palette)
+    return ((0, surface), (1, rim), (2, surface))
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 _LONG = ctypes.c_longlong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_long
@@ -164,16 +233,17 @@ class _Rect(ctypes.Structure):
     ]
 
 
-def build_plate() -> Image.Image:
+def build_plate(palette: str | None = None) -> Image.Image:
     """Render the rounded plate, antialiased, ready for the colour key.
 
     Tk has no antialiased shape, so a plate drawn from canvas primitives has a
     staircase of hard pixels along its edge. Pillow has no such limit: the
     layers are drawn at _PLATE_SCALE times the size and brought back down with
     _PLATE_RESAMPLE, which averages the boundary into blends. The result is RGB
-    with no alpha channel and every pixel outside the rounded shape left in
-    _COLOR_KEY, so -transparentcolor cuts a true hole and the blends along its
-    rim read as a smooth edge. Set CORNER to 0 and the same code path draws a
+    with no alpha channel and every pixel outside the rounded shape left in the key,
+    so -transparentcolor cuts a true hole and the blends along its rim stay within
+    a hair of the plate - which, because the key is derived from the plate, is to
+    say invisible: see `chip_key`. Set CORNER to 0 and the same code path draws a
     square plate.
 
     This is the one Pillow call on the run-time path, and it is reached from the
@@ -181,9 +251,9 @@ def build_plate() -> Image.Image:
     to lay the same plate on without Pillow.
     """
     scale = _PLATE_SCALE
-    image = Image.new("RGB", (WIDTH * scale, HEIGHT * scale), _rgb(_COLOR_KEY))
+    image = Image.new("RGB", (WIDTH * scale, HEIGHT * scale), _rgb(chip_key(palette)))
     draw = ImageDraw.Draw(image)
-    for inset, fill in _PLATE_LAYERS:
+    for inset, fill in plate_layers(palette):
         draw.rounded_rectangle(
             (
                 inset * scale, inset * scale,
@@ -237,9 +307,12 @@ class RecordingOverlay:
 
     def __init__(
         self, master: tk.Misc, next_level: Callable[[], float | None],
+        palette: str | None = None,
     ) -> None:
         self._master = master
         self._next_level = next_level
+        self._palette = palette
+        self._key = chip_key(palette)
         self._window: tk.Toplevel | None = None
         self._canvas: tk.Canvas | None = None
         self._plate: Image.Image | None = None
@@ -256,6 +329,41 @@ class RecordingOverlay:
         self._shown = False
         self._second = -1
         self._since = 0.0
+
+    def set_theme(self, palette: str | None = None) -> None:
+        """Take the colours of a theme: a new plate, the ramp and the clock.
+
+        The chip outlives every theme change - it is built once, when the panel
+        is, and only the panel rebuilds its own tree - so a theme change has to
+        be pushed here rather than the other way round. Three things carry
+        colour and each needs its own answer: the plate is a baked Pillow image
+        and is built again, the bars and the clock are canvas items and are
+        recoloured where they are. Rebuilding the whole chip instead would throw
+        away the recording that is running on it.
+
+        A hidden chip has no canvas yet, which is the ordinary case: a recording
+        that is not on screen has nothing to repaint, so the colours are kept for
+        the next show().
+        """
+        self._palette = palette
+        if self._canvas is None:
+            return
+        # The key belongs to the theme as much as the plate does: it is derived
+        # from the plate's fill, so a window left on the old theme's key would
+        # stop punching its hole and the chip would appear as a solid rectangle
+        # of key colour.
+        key = chip_key(palette)
+        self._key = key
+        self._canvas.configure(bg=key)
+        self._window.attributes("-transparentcolor", key)
+        self._plate = None
+        self._photo = None
+        self._put_plate(self._window, self._canvas)
+        self._paint_bars(self._canvas)
+        if self._clock is not None:
+            self._canvas.itemconfigure(
+                self._clock, fill=chip_colours(palette)[5],
+            )
 
     def show(self) -> None:
         """Make the chip visible and start the elapsed counter."""
@@ -317,11 +425,11 @@ class RecordingOverlay:
         window.withdraw()
         window.overrideredirect(True)
         window.attributes("-topmost", True)
-        window.attributes("-transparentcolor", _COLOR_KEY)
+        window.attributes("-transparentcolor", self._key)
         window.resizable(False, False)
 
         canvas = tk.Canvas(
-            window, width=WIDTH, height=HEIGHT, bg=_COLOR_KEY,
+            window, width=WIDTH, height=HEIGHT, bg=self._key,
             highlightthickness=0, borderwidth=0,
         )
         canvas.pack(fill="both", expand=True)
@@ -329,7 +437,7 @@ class RecordingOverlay:
         self._put_plate(window, canvas)
         self._draw_bars(canvas)
         self._clock = canvas.create_text(
-            WIDTH // 2, CLOCK_Y, text="0:00", fill=_CLOCK,
+            WIDTH // 2, CLOCK_Y, text="0:00", fill=chip_colours(self._palette)[5],
             font=theme.mono(CLOCK_SIZE),
         )
         # Tk rewrites the extended style every time the window is mapped, so
@@ -360,7 +468,7 @@ class RecordingOverlay:
         is a Tk failure, and it is left to raise as one.
         """
         try:
-            plate = build_plate()
+            plate = build_plate(self._palette)
             photo = ImageTk.PhotoImage(plate, master=window)
         except Exception:
             if not self._plate_failed:
@@ -373,10 +481,10 @@ class RecordingOverlay:
             self._photo = None
             self._draw_square_plate(canvas)
             return
-        # The plate never changes, so it is built once and held for the lifetime
-        # of the chip: a fresh Pillow image every 30 ms would be work with
-        # nothing to show for it. The PhotoImage is held too, because Tk keeps
-        # no reference of its own and would otherwise draw nothing.
+        # The plate is a picture, not a parameter, so it is built once per theme and
+        # held until the theme changes: a fresh Pillow image every 30 ms would be
+        # work with nothing to show for it. The PhotoImage is held too, because
+        # Tk keeps no reference of its own and would otherwise draw nothing.
         self._plate = plate
         self._photo = photo
         if self._plate_item is None:
@@ -392,7 +500,7 @@ class RecordingOverlay:
         Only the antialiasing is missing. Nothing here is mapped yet, so none of
         it can take the focus.
         """
-        for inset, fill in _PLATE_LAYERS:
+        for inset, fill in plate_layers(self._palette):
             canvas.create_rectangle(
                 inset, inset, WIDTH - 1 - inset, HEIGHT - 1 - inset,
                 fill=fill, outline="",
@@ -402,34 +510,42 @@ class RecordingOverlay:
         """Create the five rectangles one mirrored bar is made of.
 
         A bar is a low block on the centre line with a mid and a high band on
-        each side of it, so the fixed ramp reads the same upwards as downwards.
+        each side of it, so the theme's ramp reads the same upwards as downwards.
         The colours are set once and only the coordinates move per frame, so a
         bar keeps its ramp as it grows and shrinks.
         """
+        _, _, low, mid, high, _ = chip_colours(self._palette)
         for index in range(BARS):
             left = _bar_left(index)
             right = left + BAR_WIDTH
             self._bars.append([
                 canvas.create_rectangle(
-                    left, BAR_MID, right, BAR_MID, fill=_BAR_LOW, outline="",
+                    left, BAR_MID, right, BAR_MID, fill=low, outline="",
                 ),
                 canvas.create_rectangle(
-                    left, BAR_MID, right, BAR_MID, fill=_BAR_MID, outline="",
+                    left, BAR_MID, right, BAR_MID, fill=mid, outline="",
                 ),
                 canvas.create_rectangle(
-                    left, BAR_MID, right, BAR_MID, fill=_BAR_MID, outline="",
+                    left, BAR_MID, right, BAR_MID, fill=mid, outline="",
                 ),
                 canvas.create_rectangle(
-                    left, BAR_MID, right, BAR_MID, fill=_BAR_HIGH, outline="",
+                    left, BAR_MID, right, BAR_MID, fill=high, outline="",
                 ),
                 canvas.create_rectangle(
-                    left, BAR_MID, right, BAR_MID, fill=_BAR_HIGH, outline="",
+                    left, BAR_MID, right, BAR_MID, fill=high, outline="",
                 ),
             ])
 
     def _paint_bars(self, canvas: tk.Canvas) -> None:
-        """Give every existing bar the current theme's ramp, in place."""
-        ramp = (_BAR_LOW, _BAR_MID, _BAR_MID, _BAR_HIGH, _BAR_HIGH)
+        """Give every existing bar the current theme's ramp, in place.
+
+        Recolouring is not rebuilding: the five rectangles of a bar are found by
+        the coordinates they already have, so a bar that is mid-animation keeps
+        its height and only changes colour. That is what lets the theme change
+        under a running recording.
+        """
+        _, _, low, mid, high, _ = chip_colours(self._palette)
+        ramp = (low, mid, mid, high, high)
         for bar in self._bars:
             for item, colour in zip(bar, ramp):
                 canvas.itemconfigure(item, fill=colour)

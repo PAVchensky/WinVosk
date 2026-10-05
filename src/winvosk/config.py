@@ -20,7 +20,7 @@ APP_NAME = "WinVosk"
 # without anyone reading a file. Three parts, MAJOR.MINOR.PATCH, all three
 # written: a two part number sorts wrongly in the release list and cannot carry
 # a patch at all.
-VERSION = "1.8.2"
+VERSION = "1.9.1"
 
 # True inside a PyInstaller bundle, where the modules sit in `_internal\` and
 # `__file__` no longer points at the folder the user keeps their files in.
@@ -93,14 +93,22 @@ LANGUAGE_DEFAULT = text.DEFAULT_LANGUAGE
 # default costs nothing: `theme` imports `tkinter`, and this module is imported
 # by every console flag in the application, none of which opens a window. See
 # `winvosk.theme` for the long version of that argument.
-THEMES = ("light", "dark")
+THEMES = ("light", "dark", "studio")
 # Light: the panel is a light grey page with white cards, which is what it reads
-# as at a glance, and the dark one is a switch away in the settings rather than a
-# decision to undo.
-THEME_DEFAULT = "light"
+# as at a glance. Studio is the one a machine with nothing stored gets as of 1.9.0:
+# it is the redesign, the warm near-black and amber of the asset studio, shared with
+# the README banners so the panel and the page are one design. Light and dark stay
+# in `THEMES` and keep their meaning, so a `settings.json` that names either of
+# them still gets exactly that panel - the default only decides what a machine that
+# has never chosen anything gets.
+THEME_DEFAULT = "studio"
 TYPE_DELAY = 0.02
 MAX_SESSION_SECONDS = 180.0
 PHRASES_FILE = BASE_DIR / "phrases.txt"
+# The typefaces that ship with the application, so the design does not depend on
+# what the machine happens to have installed. `theme.load_fonts` registers them
+# with the process only; nothing is written to Windows.
+FONTS_DIR = BASE_DIR / "fonts"
 
 LOG_FILE = LOGS_DIR / "app.log"
 LOG_MAX_BYTES = 2 * 1024 * 1024

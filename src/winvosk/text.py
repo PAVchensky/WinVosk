@@ -109,15 +109,15 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Add words to phrases.txt, one per line",
     },
     "option_autostart": {"ru": "Автозапуск с Windows", "en": "Start with Windows"},
-    "option_theme": {"ru": "Тёмная тема", "en": "Dark theme"},
+    "theme_name_light": {"ru": "Светлая", "en": "Light"},
+    "theme_name_dark": {"ru": "Тёмная", "en": "Dark"},
+    "theme_name_studio": {"ru": "Студия", "en": "Studio"},
     "theme_hint": {
-        "ru": "Тёмная — для ночной работы, светлая — для дневной. Настройка "
-              "сохраняется рядом с программой",
-        "en": "Dark for the night, light for the day. The setting is kept next "
-              "to the program",
+        "ru": "Три темы: студия, светлая и тёмная. Выбор сохраняется рядом "
+              "с программой",
+        "en": "Three themes: studio, light and dark. The choice is kept next to "
+              "the program",
     },
-    "theme_on": {"ru": "Тёмная тема включена", "en": "Dark theme is on"},
-    "theme_off": {"ru": "Включена светлая тема", "en": "Light theme is on"},
     "option_toggle": {"ru": "Переключать запись", "en": "Toggle recording"},
     "toggle_hint": {
         "ru": "Нажали — пишет, нажали ещё раз — стоп. Страховка: «Стоп» на панели, "
@@ -251,6 +251,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ru": "Не удалось сохранить тему",
         "en": "Could not save the theme",
     },
+    # Three themes are a choice, not a switch, so the line that answers the tap
+    # names the theme rather than saying the old switch is on or off. The name
+    # comes from `theme.theme_names()`, which is the same mapping the radio row
+    # is built from, so the two cannot say different things.
+    "theme_now": {"ru": "Тема: {name}", "en": "Theme: {name}"},
     "autostart_failed": {
         "ru": "Не удалось изменить автозапуск",
         "en": "Could not change the startup entry",

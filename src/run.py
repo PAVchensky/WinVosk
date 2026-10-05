@@ -347,20 +347,50 @@ class App:
     def _pump(self) -> None:
         if self._closing:
             return
+        try:
+            self._drain()
+        finally:
+            # Last, and in a `finally`. A command that raised must not be able to
+            # stop this being scheduled again, because that is not a lost feature:
+            # nothing would drain the queues again, so the hotkey would stop
+            # starting a recording, the tray would stop opening the panel and the
+            # exit would stop working, with the process still holding
+            # `Local\WinVoskSingleInstance` so a second copy could not start
+            # either. One bad command cost the whole application.
+            self._panel.schedule(self._pump)
+
+    def _drain(self) -> None:
         for _ in range(32):
             try:
                 command = self._commands.get_nowait()
             except queue.Empty:
                 break
-            self._handle_command(command)
+            self._guarded("command", self._handle_command, command)
         for _ in range(64):
             try:
                 event = self._events.get_nowait()
             except queue.Empty:
                 break
-            self._handle_event(event)
-        self._poll_capture()
-        self._panel.schedule(self._pump)
+            self._guarded("event", self._handle_event, event)
+        self._guarded("capture", self._poll_capture)
+
+    @staticmethod
+    def _guarded(kind: str, action, *args) -> None:
+        """Run one queued thing, and let a failure be a failed thing and no more.
+
+        The failure is logged with its traceback, which is the only record of it
+        there will ever be: `Panel` routes Tk callback exceptions to the log
+        precisely because a windowless bundle has no `stderr` to print one to.
+        Swallowing it is not the point — continuing is. A command that cannot be
+        carried out should cost the user that command, not the application.
+
+        The arguments are passed through rather than a payload being assumed, so
+        a handler that takes none of them — `_poll_capture` — is not handed one.
+        """
+        try:
+            action(*args)
+        except Exception:
+            log.exception("%s handler failed", kind)
 
     def _handle_command(self, command) -> None:
         """Run one queued command. A command is a name, or a name with a value.
@@ -722,7 +752,7 @@ class App:
         self._tray.set_theme(name)
         self._tray.refresh()
         self._panel.set_option_hint(
-            text.t("theme_on" if name == theme.DARK.name else "theme_off")
+            text.t("theme_now", name=theme.theme_names().get(name, name))
         )
 
     def quit(self) -> None:

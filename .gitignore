@@ -51,3 +51,17 @@ docs/img/WinVosk_banner_max.png
 Thumbs.db
 desktop.ini
 .plan/
+
+
+# Local renders that no page points at: a dark banner, a line banner, two
+# reduced variants, a scratch chip frame and a superseded banner. The images
+# the guides actually embed are whatever git ls-files docs/img lists. The dark
+# banner alone is 6.4 MB, three times the tracked one, so these are kept out
+# rather than committed and deleted afterwards, which would leave them in history
+# for good.
+docs/img/winvosk-banner-dark.png
+docs/img/WinVosk_banner_old.png
+docs/img/WinVosk-line.png
+docs/img/WinVosk-small.png
+docs/img/WinWosk-Private.png
+docs/img/chip2.png

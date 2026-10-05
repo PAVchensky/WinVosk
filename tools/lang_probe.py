@@ -203,11 +203,45 @@ def case_switching() -> bool:
     return ok
 
 
+def case_keys_exist() -> bool:
+    """Every key the source asks for by name has to be in `MESSAGES`.
+
+    `text.t` on a key that is not there logs a warning and returns the key, which
+    is the right behaviour at run time — a missing label must not take the panel
+    down — and the wrong behaviour to ship in. The other cases read `MESSAGES`
+    from above and can only say that every entry is complete; nothing looked at
+    the other direction, the call sites. That gap was found the hard way: a theme
+    label asked for `theme_off`, which no longer exists, so the panel put the
+    literal string `theme_off` on screen and the only trace was one WARNING line
+    in the log of a windowless bundle nobody was reading.
+
+    Read from the source rather than run, because the call is the thing that is
+    wrong and running it would need the whole application around it.
+    """
+    import re
+
+    requested = re.compile(r"""\btext\.t\(\s*["']([a-z0-9_]+)["']""")
+    missing: list[tuple[str, str]] = []
+    for path in sorted((ROOT / "src").rglob("*.py")):
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            for key in requested.findall(line):
+                if key not in text.MESSAGES:
+                    missing.append((f"{path.name}:{number}", key))
+    for where, key in missing:
+        print(f"  text.t({key!r}) at {where} has no message", flush=True)
+    print(f"  {len(text.MESSAGES)} message(s), every literal call site found",
+          flush=True)
+    return not missing
+
+
 def main() -> None:
     results = [
         case_every_language(),
         case_placeholders(),
         case_no_stray_literals(),
+        case_keys_exist(),
         case_language_setting(),
         case_theme_setting(),
         case_switching(),

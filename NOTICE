@@ -70,6 +70,14 @@ Pillow, pystray, sounddevice, pyperclip
   LGPL-3.0, sounddevice is MIT, pyperclip is BSD. Their license texts travel in
   `licenses/`.
 
+Space Grotesk and JetBrains Mono
+  Typefaces by Florian Karsten (Space Grotesk, https://fonts.google.com/specimen/Space+Grotesk)
+  and JetBrains (https://www.jetbrains.com/lp/mono/), redistributed unmodified
+  under the SIL Open Font License, Version 1.1. Shipped in the `fonts/` folder
+  of the binary build, in the three weights the panel uses, and registered with
+  the running process only. Their license texts travel beside them in `fonts/`
+  and in `licenses/`.
+
 Speech model vosk-model-small-ru-0.22
   Published by Alpha Cephei Inc at https://alphacephei.com/vosk/models and
   listed there under the Apache License, Version 2.0. Redistributed unmodified

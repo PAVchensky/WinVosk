@@ -206,8 +206,28 @@ def _folder_size(path: Path) -> int:
 
 
 def copy_user_files() -> None:
-    """Put the model and the word list next to the exe, where the app looks."""
+    r"""Put the model, the fonts and the word list next to the exe, where the app looks.
+
+    The fonts are here rather than in `WinVosk.spec`'s `datas` on purpose. Data
+    listed in the spec lands under `_internal\`, while `config.FONTS_DIR` is
+    `BASE_DIR / "fonts"` - the folder the exe is in - because that is where the
+    app keeps everything it reads and writes. `AddFontResourceExW` takes a path,
+    and a path under `_internal\` would need a second rule for where to look,
+    decided at run time, for four files that have to be there anyway.
+    """
     shutil.copytree(ROOT / "models", DIST / "models", dirs_exist_ok=True)
+    fonts = ROOT / "fonts"
+    if not (fonts / "SpaceGrotesk-Regular.ttf").exists():
+        raise SystemExit(
+            f"{fonts} has no SpaceGrotesk-Regular.ttf. The panel asks for a "
+            "typeface by name and there is nothing to register, so it would fall "
+            "back to Segoe and the design this release ships would not be the "
+            "design that ships."
+        )
+    shutil.copytree(fonts, DIST / "fonts", dirs_exist_ok=True)
+    print(f"fonts       : {fonts.relative_to(ROOT)} -> "
+          f"{(DIST / 'fonts').relative_to(ROOT)} "
+          f"({sum(p.stat().st_size for p in (DIST / 'fonts').glob('*'))} bytes)")
     phrases = ROOT / "phrases.txt"
     if phrases.exists():
         shutil.copy2(phrases, DIST / phrases.name)

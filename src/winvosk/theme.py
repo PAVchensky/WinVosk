@@ -39,7 +39,7 @@ from tkinter import ttk
 
 from PIL import Image, ImageDraw, ImageFilter
 
-from . import config
+from . import config, text
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +140,14 @@ class Palette:
     tray_idle_fg: str
     tray_active_bg: str
     tray_active_fg: str
+    # Whether a card is separated from the page by a one pixel line rather than by
+    # a shadow. The first two themes dropped the hairline in favour of the shadow;
+    # this one is the other trade, and it is a property of the palette because a
+    # widget asking "is this theme a hairline theme" is a widget reading a design
+    # decision it has no business having an opinion about.
+    hairline: bool = False
+    # Whether the page is dark, which is a property and not a name.
+    dark: bool = False
 
 
 # The light theme is the one the brief describes: a light grey page, white cards,
@@ -166,13 +174,16 @@ LIGHT = Palette(
     danger="#DC2626",
     danger_soft="#FEF2F2",
     shadow=(17, 24, 39, SHADOW_ALPHA_LIGHT),
-    chip_surface="#FFFFFF",
-    chip_border="#E7E9EF",
+    # The chip's plate is dark in every theme, here included: it floats over
+    # whatever the user is typing into, and a white chip on a white page is
+    # invisible. Only the bars and the clock take the theme's accent.
+    chip_surface="#1B1B1F",
+    chip_border="#34343B",
     chip_glow="#C7D2FE",
     chip_bar_low="#A5B4FC",
     chip_bar_mid="#818CF8",
     chip_bar_high="#6366F1",
-    chip_clock="#5B6472",
+    chip_clock="#C7D2FE",
     tray_idle_bg=_TRAY_IDLE,
     tray_idle_fg="#FFFFFF",
     tray_active_bg=_TRAY_ACTIVE,
@@ -210,9 +221,76 @@ DARK = Palette(
     tray_idle_fg="#FFFFFF",
     tray_active_bg=_TRAY_ACTIVE,
     tray_active_fg="#FFFFFF",
+    dark=True,
 )
 
 PALETTES = {"light": LIGHT, "dark": DARK}
+
+# The third theme, and the only one that is warm. Taken from the project's own
+# asset studio rather than invented here, so the panel and the README banners are
+# one design and not two that happen to share a name.
+#
+# The page is a warm near-black rather than a neutral one, the accent is amber, and
+# every edge is a one pixel line: the studio draws its cards with a border and no
+# shadow at all, which is why `hairline` is set. A shadow on a near-black page is
+# invisible anyway — there is nothing behind it to darken — so the same construction
+# that reads as depth on white reads as a smudge on black. The border is what
+# separates one card from the next here, and it is the only thing that does.
+STUDIO = Palette(
+    name="studio",
+    bg="#0F0E0C",
+    surface="#171512",
+    surface_alt="#1D1A16",
+    surface_hover="#241F19",
+    border="#2E2A24",
+    border_strong="#423C33",
+    text="#F1EDE4",
+    text_muted="#9A9484",
+    text_subtle="#8A8474",
+    accent="#FFA02E",
+    accent_hover="#FFB055",
+    accent_press="#E08C1A",
+    accent_soft="#2A2015",
+    accent_on="#181206",
+    success="#8FBF6B",
+    danger="#E5644A",
+    danger_soft="#2A1A15",
+    shadow=(0, 0, 0, 0),
+    chip_surface="#1A1713",
+    chip_border="#3A342B",
+    chip_glow="#FFA02E",
+    chip_bar_low="#8A5F22",
+    chip_bar_mid="#C8801F",
+    chip_bar_high="#FFA02E",
+    chip_clock="#C8B89A",
+    tray_idle_bg=_TRAY_IDLE,
+    tray_idle_fg="#FFFFFF",
+    tray_active_bg=_TRAY_ACTIVE,
+    tray_active_fg="#FFFFFF",
+    hairline=True,
+    dark=True,
+)
+
+PALETTES["studio"] = STUDIO
+
+# What each theme is called, in the language that is active right now.
+#
+# A function and not a table, because the answer is a translated string and a table
+# built at import time is frozen in whatever language happened to be active when
+# the module was first imported — which, for a program that starts in English and
+# is then switched to Russian, is the wrong one from that moment on.
+_THEME_NAME_KEYS = {
+    LIGHT.name: "theme_name_light",
+    DARK.name: "theme_name_dark",
+    STUDIO.name: "theme_name_studio",
+}
+
+
+def theme_names() -> dict[str, str]:
+    """Every theme's name in the current language, as `name -> name`."""
+    return {
+        name: text.t(key) for name, key in _THEME_NAME_KEYS.items()
+    }
 
 
 @lru_cache(maxsize=len(THEMES) + 1)
@@ -231,19 +309,91 @@ def palette(name: str = DEFAULT_THEME) -> Palette:
 
 
 def is_dark(name: str = DEFAULT_THEME) -> bool:
-    return palette(name).name == DARK.name
+    """Whether this theme's page is dark, which is not the same as its name.
+
+    A theme that has a third name and a near-black page is still a dark theme, and
+    two places ask the question by property rather than by name: the switch on the
+    settings tab, and the title bar. Asking by name left the studio theme with a
+    white caption above a black panel, which is the one thing on screen that no
+    design has ever wanted.
+    """
+    colours = palette(name)
+    return colours.dark or colours.bg.lstrip("#")[:2] < "40"
 
 
 # Fonts. Inter is asked for first because the brief asks for it, and it is
 # usually not installed; "Segoe UI Variable Text" is what Windows 11 ships as its
 # system-ui, and it is the closest thing to Inter that is actually there.
-_UI_STACK = ("Inter", "Segoe UI Variable Text", "Segoe UI", "Tahoma", "Arial")
-_MONO_STACK = ("Cascadia Mono", "Cascadia Code", "Consolas", "Courier New")
+_UI_STACK = ("Space Grotesk", "Inter", "Segoe UI Variable Text", "Segoe UI",
+             "Tahoma", "Arial")
+_MONO_STACK = ("JetBrains Mono", "Cascadia Mono", "Cascadia Code", "Consolas",
+               "Courier New")
+
+# The two families that ship with the application, and the files that carry them.
+# Registered with the process, not installed into Windows: `FR_PRIVATE` keeps the
+# font out of every other program on the machine and out of the registry, which is
+# the only way to get a typeface on a machine that does not have one without
+# turning a portable folder into a system modification.
+#
+# Three weights each because the design uses all three and Tk has only two:
+# `weight="normal"` and `weight="bold"`. Medium is reached by name below, not by
+# weight, so without the file a `500` label is drawn in Regular and the difference
+# is invisible until somebody looks for it.
+BUNDLED_FONTS: dict[str, tuple[str, ...]] = {
+    "Space Grotesk": ("SpaceGrotesk-Regular.ttf", "SpaceGrotesk-Medium.ttf",
+                      "SpaceGrotesk-Bold.ttf"),
+    "JetBrains Mono": ("JetBrainsMono-Regular.ttf", "JetBrainsMono-Medium.ttf",
+                       "JetBrainsMono-Bold.ttf"),
+}
+FR_PRIVATE = 0x10
 
 _dpi = 96.0
 _scale = 1.0
 _ui_family = "Segoe UI"
 _mono_family = "Consolas"
+_ui_medium = "Segoe UI"
+_mono_medium = "Consolas"
+_fonts_loaded = 0
+
+
+def load_fonts() -> int:
+    """Register the bundled fonts with this process. Returns how many were added.
+
+    Called from `bind`, before the families are resolved, because a font that is
+    not registered is not in the list Tk hands back — and a machine without
+    JetBrains Mono would quietly get Cascadia Mono instead, which looks close
+    enough that nobody would notice until the export.
+
+    Every failure is survivable and none is fatal: a missing folder, a missing
+    file, or a Windows that refuses all say so at `INFO` and the stack falls
+    through to whatever the machine actually has.
+    """
+    global _fonts_loaded
+    if sys.platform != "win32":
+        return 0
+    directory = config.FONTS_DIR
+    if not directory.is_dir():
+        log.info("no bundled fonts in %s, using what the machine has", directory)
+        return 0
+    gdi = ctypes.WinDLL("gdi32", use_last_error=True)
+    add = gdi.AddFontResourceExW
+    add.restype = ctypes.c_int
+    add.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_void_p]
+    added = 0
+    for family, files in BUNDLED_FONTS.items():
+        for name in files:
+            path = directory / name
+            if not path.is_file():
+                log.info("%s is not there, %s falls back", name, family)
+                continue
+            if add(str(path), FR_PRIVATE, None) > 0:
+                added += 1
+            else:
+                log.warning("Windows refused %s (error %d)", path,
+                            ctypes.get_last_error())
+    _fonts_loaded = added
+    log.info("registered %d bundled font file(s) from %s", added, directory)
+    return added
 
 
 def bind(root: tk.Misc) -> None:
@@ -251,7 +401,8 @@ def bind(root: tk.Misc) -> None:
 
     Called once, right after the root exists and before a single widget is built,
     because both answers come from Tk: the family list is what the machine has
-    installed, and `winfo_fpixels` is the real dpi rather than an assumption.
+    installed plus what this process registered, and `winfo_fpixels` is the real
+    dpi rather than an assumption.
 
     The scale is `dpi / 96`, not `dpi / 72`. The second one is points to pixels,
     which is the wrong question here: a design token is a pixel, the way a
@@ -259,7 +410,8 @@ def bind(root: tk.Misc) -> None:
     rather than become 16. Points only enter where a font asks for them, and
     `points()` is where that conversion lives.
     """
-    global _dpi, _scale, _ui_family, _mono_family
+    global _dpi, _scale, _ui_family, _mono_family, _ui_medium, _mono_medium
+    load_fonts()
     try:
         _dpi = float(root.winfo_fpixels("1i")) or 96.0
     except (tk.TclError, ValueError, TypeError):
@@ -273,11 +425,29 @@ def bind(root: tk.Misc) -> None:
         available = {}
     _ui_family = _pick(_UI_STACK, available, "Segoe UI")
     _mono_family = _pick(_MONO_STACK, available, "Consolas")
+    _ui_medium = _medium(_UI_STACK, available, _ui_family)
+    _mono_medium = _medium(_MONO_STACK, available, _mono_family)
     reset()
     log.info(
-        "typeface %r, monospace %r, %.0f dpi, display scale %.2f",
-        _ui_family, _mono_family, _dpi, _scale,
+        "typeface %r, monospace %r, %.0f dpi, display scale %.2f, %d bundled file(s)",
+        _ui_family, _mono_family, _dpi, _scale, _fonts_loaded,
     )
+
+
+def _medium(stack: tuple[str, ...], available: dict[str, str],
+            fallback: str) -> str:
+    """The Medium cut of the family that was picked, or the family itself.
+
+    Tk has no weight between normal and bold, so a `500` in the design is the
+    Medium file asked for by name. Where it is not there — the machine's own
+    Segoe, or a machine with no bundled fonts at all — this is the family, and the
+    label is drawn in Regular rather than in something that does not exist.
+    """
+    chosen = available.get(fallback.casefold())
+    if not chosen:
+        return fallback
+    medium = f"{chosen} Medium"
+    return medium if medium.casefold() in available else chosen
 
 
 def _pick(stack: tuple[str, ...], available: dict[str, str], fallback: str) -> str:
@@ -336,18 +506,24 @@ def ui(size: int = 13, weight: str = "normal") -> tkfont.Font:
     argument because Tk has nowhere to put one: a font's line spacing is the
     face's own, and `widgets.Paragraph` is what reaches a stylesheet's
     line-height, through the only option that can.
+
+    `medium=True` asks for the Medium cut by name rather than by weight, because
+    Tk has no weight between normal and bold and the design has a `500` in it.
     """
+    if weight == "medium":
+        return tkfont.Font(family=_ui_medium, size=points(size))
     return tkfont.Font(family=_ui_family, size=points(size), weight=weight)
 
 
 @lru_cache(maxsize=64)
-def mono(size: int = 15) -> tkfont.Font:
+def mono(size: int = 15, medium: bool = False) -> tkfont.Font:
     """The monospace face, for a hotkey combination and for the transcript.
 
     A combination has to be readable key by key and the transcript is machine
     output, so both stay monospaced whatever the interface face turns out to be.
     """
-    return tkfont.Font(family=_mono_family, size=points(size))
+    family = _mono_medium if medium else _mono_family
+    return tkfont.Font(family=family, size=points(size))
 
 
 def leading(font: tkfont.Font, size: int, multiple: float = LINE_HEIGHT) -> int:
@@ -533,7 +709,7 @@ def dress_window(window: tk.Misc, colours: Palette) -> bool:
     # already being right, so folding it into the result would report every light
     # window as a failure.
     _dwm_attribute(
-        hwnd, _DWM_USE_IMMERSIVE_DARK_MODE, 1 if colours.name == DARK.name else 0
+        hwnd, _DWM_USE_IMMERSIVE_DARK_MODE, 1 if colours.dark else 0
     )
     return ok
 

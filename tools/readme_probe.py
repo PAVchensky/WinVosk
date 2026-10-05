@@ -93,7 +93,7 @@ EXPECTED: tuple[tuple[str, str], ...] = (
     "button_check_words",
     "option_toggle",
     "option_autostart",
-    "option_theme",
+    "theme_name_studio",
     "group_language",
     "tray_stop",
     "tray_show",

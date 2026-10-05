@@ -26,6 +26,25 @@ license file. Its classifier says Apache, and the project it is built from,
 `alphacep/vosk-api`, is Apache-2.0, so that is the license used here and
 `NOTICE` credits it explicitly.
 
+## Bundled typefaces
+
+| Family | Version | License | Used for | Text |
+| --- | --- | --- | --- | --- |
+| Space Grotesk | 2.000 | SIL OFL 1.1 | the panel's text, labels and buttons | `fonts/SpaceGrotesk-OFL.txt`, `licenses/spacegrotesk-OFL.txt` |
+| JetBrains Mono | 2.304 | SIL OFL 1.1 | the model name, the timers, the monospace readouts | `fonts/JetBrainsMono-OFL.txt`, `licenses/jetbrainsmono-OFL.txt` |
+
+Both are redistributed unmodified, in the three weights the panel uses
+(Regular, Medium, Bold), and `theme.load_fonts` registers them with the running
+process only through `AddFontResourceExW(FR_PRIVATE)` — nothing is installed into
+Windows and no font is registered for any other program. They travel in the
+bundle as `fonts\` next to the exe rather than inside `_internal\`, because the OFL
+asks for the licence to travel with the font and `config.FONTS_DIR` is the folder
+the app already reads its own files from. The author lists are
+`fonts/SpaceGrotesk-AUTHORS.txt` and `fonts/JetBrainsMono-AUTHORS.txt`.
+
+The versions above are the version strings in the files themselves (OpenType name
+ID 5), not the names of the folders they were downloaded under.
+
 ## Inside `WinVosk.exe`
 
 | Component | License | Notes |

@@ -53,7 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(message)s")
 
-from winvosk import overlay as ov
+from winvosk import overlay as ov, theme
 
 SOURCE = Path(ov.__file__).resolve()
 
@@ -122,21 +122,32 @@ FIELDS: tuple[Field, ...] = (
     Field("WOBBLE_STEP", "float", "WOBBLE_STEP", "Движение", 0.0, 10.0),
     Field("PHASE_SPREAD", "float", "PHASE_SPREAD", "Движение", 0.0, 100.0),
     Field("TICK_MS", "int", "TICK_MS", "Движение", 5, 2000),
-    Field("_BAR_LOW", "text", "_BAR_LOW", "Вид"),
-    Field("_BAR_MID", "text", "_BAR_MID", "Вид"),
-    Field("_BAR_HIGH", "text", "_BAR_HIGH", "Вид"),
-    Field("_CLOCK", "text", "_CLOCK", "Вид"),
-    Field("_BACKGROUND", "text", "_BACKGROUND", "Вид"),
-    Field("_BORDER", "text", "_BORDER", "Вид"),
-    Field("_CLOCK_FONT", "text", "_CLOCK_FONT (семейство размер)", "Вид"),
-    Field("_COLOR_KEY", "text", "_COLOR_KEY", "Вид"),
 )
+
+# There is no "Вид" group any more. The chip's plate, rim, bar ramp and clock
+# colour are the `chip_*` roles of a `theme.Palette`, one set per theme, so there
+# is no single constant here to move: three themes are six values each, and a
+# field that wrote one of them would write it into all of them at once. The clock's
+# typeface is `theme.mono(CLOCK_SIZE)`, and the colour key is derived from the
+# plate's fill by `overlay.chip_key`. Tune those where they live - in
+# `theme.py`, next to the palette they belong to.
 
 BY_ATTR = {field.attr: field for field in FIELDS}
 REBUILD_ATTRS = frozenset(
-    field.attr for field in FIELDS if field.group in {"Геометрия", "Вид"}
+    field.attr for field in FIELDS if field.group == "Геометрия"
 )
 TUNABLE = frozenset(BY_ATTR)
+
+
+def _clock_font(root: tk.Misc) -> tkfont.Font:
+    """The clock's typeface, the one the chip draws it with.
+
+    `overlay` asks `theme.mono(CLOCK_SIZE)` for it, so the preview asks the same
+    question rather than carrying a family name of its own: a tuner that measured
+    a different font than the app drew would report the clock clear of the bars
+    while the real chip had them on top of each other.
+    """
+    return theme.mono(ov.CLOCK_SIZE)
 
 
 def bell(distance: float) -> float:
@@ -352,13 +363,19 @@ class Tuner:
     def __init__(self, source: FakeSpeech) -> None:
         self._root = tk.Tk()
         self._root.title("Чип записи — настройка")
+        # The same call the panel makes, before a widget exists: it registers the
+        # bundled typefaces and resolves which families this machine has. Without
+        # it the preview measures Consolas while the chip draws JetBrains Mono, and
+        # every "bars clear of the clock" answer it gives is about a font nobody
+        # will see.
+        theme.bind(self._root)
         self._fake = source
         self._live: Microphone | None = None
         self._vars: dict[str, tk.StringVar] = {}
         self._overlay: ov.RecordingOverlay | None = None
         self._pending: str | None = None
         self._readout: str | None = None
-        self._clock_font = tkfont.Font(root=self._root, font=ov._CLOCK_FONT)
+        self._clock_font = _clock_font(self._root)
         self._errors: list[str] = []
         self._warnings: list[str] = []
         self._defaults = read_source(SOURCE)
@@ -480,14 +497,6 @@ class Tuner:
                 errors.append("BAR_SPAN_MIN больше BAR_SPAN_MAX — оставлено как было")
                 values.pop("BAR_SPAN_MIN")
                 values.pop("BAR_SPAN_MAX")
-        font = values.get("_CLOCK_FONT")
-        if isinstance(font, str):
-            parts = font.split()
-            try:
-                values["_CLOCK_FONT"] = (parts[0], int(parts[1]))
-            except (IndexError, ValueError):
-                errors.append('_CLOCK_FONT: нужно "семейство размер", например Consolas 9')
-                values.pop("_CLOCK_FONT")
         return values, errors
 
     def _reset(self) -> None:
@@ -515,7 +524,7 @@ class Tuner:
             self._recompute_bell()
         if initial or changed & {"BAR_TOP", "BAR_FIELD"}:
             self._recompute_mid()
-        self._clock_font = tkfont.Font(root=self._root, font=ov._CLOCK_FONT)
+        self._clock_font = _clock_font(self._root)
         if initial or force_rebuild or changed & REBUILD_ATTRS:
             self._rebuild()
         else:
@@ -641,7 +650,7 @@ class Tuner:
             )
         if clock_top < 0 or ov.CLOCK_Y + clock / 2 > ov.HEIGHT:
             issues.append(
-                f"! часы {ov._CLOCK_FONT[0]} {ov._CLOCK_FONT[1]} pt занимают "
+                f"! часы {ov.CLOCK_SIZE} pt занимают "
                 f"{clock_top:.1f} .. {ov.CLOCK_Y + clock / 2:.1f} при высоте {ov.HEIGHT}"
             )
         if 2 * half > ov.BAR_FIELD:
@@ -769,8 +778,22 @@ def self_test(path: Path, dump: bool = False) -> int:
     half = max_half_height(
         idle, spans, float(values["WOBBLE_REL"]), float(values["WOBBLE_ABS"])
     )
-    family, size = values["_CLOCK_FONT"]
-    line = int(size) * 96 / 72 * _CLOCK_LINE_FACTOR
+    # The typeface and the size come from where the chip asks for them, and both
+    # are asked through a Tk font object, so the arithmetic below runs against a
+    # root window this function makes and throws away rather than one it hopes is
+    # already there. `theme.mono()` is the app's own answer and `ov.CLOCK_SIZE` its
+    # own size, so a geometry edit cannot be reported against a font the chip does
+    # not draw with.
+    probe = tk.Tk()
+    probe.withdraw()
+    try:
+        theme.bind(probe)
+        clock = _clock_font(probe)
+        family = clock.actual("family")
+        size = ov.CLOCK_SIZE
+        line = clock.metrics("linespace")
+    finally:
+        probe.destroy()
     clock_top = int(values["CLOCK_Y"]) - line / 2
     clock_bottom = int(values["CLOCK_Y"]) + line / 2
 
@@ -874,10 +897,10 @@ def gui_smoke(path: Path) -> int:
             copy = Path(folder) / path.name
             shutil.copy(path, copy)
             before = copy.read_text(encoding="utf-8")
-            write_source(copy, {"HEIGHT": 36, "BAR_SPAN_MAX": 5.7, "_BAR_LOW": "#123456"})
+            write_source(copy, {"HEIGHT": 36, "BAR_SPAN_MAX": 5.7, "CORNER": 14})
             after = copy.read_text(encoding="utf-8")
             reread = read_source(copy)
-            for name, expected in (("HEIGHT", 36), ("BAR_SPAN_MAX", 5.7), ("_BAR_LOW", "#123456")):
+            for name, expected in (("HEIGHT", 36), ("BAR_SPAN_MAX", 5.7), ("CORNER", 14)):
                 if reread.get(name) != expected:
                     failures.append(f"запись {name}: получено {reread.get(name)!r}")
             changed = sum(

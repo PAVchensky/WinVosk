@@ -37,16 +37,17 @@ from winvosk import config, overlay, panel as panel_mod, text, theme
 OUT = ROOT / "docs" / "img"
 FONTS = Path(r"C:\Windows\Fonts")
 
-# The chip's colours, read straight off the module so a change in the app reaches
-# the images without a second edit here. The chip has fixed colours of its own and
-# does not follow the theme; the banner below does, and PALETTE is where it gets
-# them.
-THEME = "light"
+# The theme these images are drawn in. It is the one a machine that has never
+# chosen anything gets, so the page and the product are the same design; change it
+# and `PALETTE`, the chip and the panel shots below all move together.
+THEME = "studio"
 PALETTE = theme.palette(THEME)
-BAR_LOW = overlay._rgb(overlay._BAR_LOW)
-BAR_MID = overlay._rgb(overlay._BAR_MID)
-BAR_HIGH = overlay._rgb(overlay._BAR_HIGH)
-CLOCK = overlay._rgb(overlay._CLOCK)
+# The chip's colours, read straight off the module so a change in the app reaches
+# the images without a second edit here. They are the `chip_*` roles of the same
+# palette the banner below is drawn in, because the chip follows the theme too.
+BAR_LOW, BAR_MID, BAR_HIGH, CLOCK = (
+    overlay._rgb(colour) for colour in overlay.chip_colours(THEME)[2:]
+)
 
 PW_RENDERFULLCONTENT = 0x00000002
 
@@ -135,7 +136,8 @@ def _settle(widget) -> None:
     """Let the window finish becoming what it is going to be, then photograph it.
 
     Several passes, not one. `Panel` writes the window's DWM attributes — rounded
-    corners, no system border, the light or dark title bar — from its own `<Map>`
+    corners, no system border, the title bar this theme asks for — from its own
+    `<Map>`
     handler, and DWM repaints the frame a frame later than Tk processes the event.
     One `update()` photographs the default caption instead: measured, the caption
     comes back as a flat (63, 63, 63) whatever theme the panel is in, and only
@@ -215,26 +217,33 @@ def panel_shots() -> list[Path]:
 def _keyed_to_alpha(image: Image.Image) -> Image.Image:
     """Punch out the colour key, for anything Pillow draws rather than Tk.
 
-    The plate is laid down on `_COLOR_KEY`, because Tk has to be told to make one
-    colour transparent and that one is easier to key on. Pillow has no such
-    option, so the key goes to alpha here.
+    The plate is laid down on `overlay.chip_key`, because Tk has to be told to
+    make one colour transparent. Pillow has no such option, so the key goes to
+    alpha here.
 
     The test is "is this pixel the key, or on the way to it from the plate's own
     outermost colour", and not the equality test alone: resampling blends the key
     into its neighbour, and an equality test leaves a rim of half-keyed pixels
-    exactly where the eye notices. So the key is compared against `_BACKGROUND` —
-    the outermost layer of the plate, and therefore the only colour the key is
-    ever blended into — and a pixel goes when the key is nearer than that is.
+    exactly where the eye notices. So the key is compared against the plate's own
+    surface colour - the outermost layer of the plate, and therefore the only
+    colour the key is ever blended into - and a pixel goes when the key is nearer
+    than that is.
 
     It used to be "is this blue dominant", which was a way of saying the same
-    thing for one palette and only that one: the key is `#0000fe`, and it held
-    while the bars were pink, where red is the largest channel. It stopped
-    holding the moment a theme put indigo bars on the chip, and it punched out
-    the two things it was supposed to keep. A test that names the key and the
-    colour it blends into does not care what the palette is.
+    thing for one palette and only that one: the key was `#0000fe`, and it held
+    while the bars were pink, where red is the largest channel. It stopped holding
+    the moment a theme put indigo bars on the chip, and it punched out the two
+    things it was supposed to keep. A test that names the key and the colour it
+    blends into does not care what the palette is.
+
+    Since 1.9.0 the key is three steps from the plate rather than a colour of its
+    own, so the distance between the two is small and the comparison is closer to
+    the plain equality test than it used to be. It is kept as a distance test
+    anyway: `overlay.KEY_STEP` is a constant someone can raise, and an equality
+    test would start showing a rim the moment they did.
     """
-    key = theme.rgb(overlay._COLOR_KEY)
-    glow = overlay._rgb(overlay._BACKGROUND)
+    key = theme.rgb(overlay.chip_key(THEME))
+    glow = overlay._rgb(overlay.chip_colours(THEME)[0])
     rgba = image.convert("RGBA")
     pixels = rgba.load()
 
@@ -267,7 +276,7 @@ def _chip_frame(heights: list[float], seconds: int, scale: int = 4,
     The colour key is punched to alpha on the way out, so the result carries real
     alpha and the banner pastes it as a mask rather than as a rectangle.
     """
-    plate = overlay.build_plate()
+    plate = overlay.build_plate(THEME)
     frame = plate.copy()
     draw = ImageDraw.Draw(frame)
     for index, span in enumerate(heights):

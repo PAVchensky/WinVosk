@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import tkinter as tk
 import tkinter.font as tkfont
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from PIL import ImageTk
 
@@ -52,6 +52,11 @@ TYPE_BODY = 13
 TYPE_CAPTION = 12
 TYPE_MONO = 15
 TYPE_TINY = 11
+# A card's title, in the studio design: the face's own small size, set in caps.
+# Tk has no letter-spacing on any widget and none of them can fake it without
+# drawing every glyph by hand, so the tracking of the original is the one thing
+# about this line that is not reproduced.
+TYPE_LABEL = 10
 
 
 class _Textual:
@@ -116,8 +121,15 @@ class Card(tk.Frame):
         self._palette = palette
         self._matte = bg or palette.bg
         self._radius = radius
-        self._shadow = shadow
-        self._margin = theme.shadow_margin(theme.card_shadow(palette) if shadow else None)
+        # A hairline theme separates its cards with a line and has no shadow to
+        # make room for, so it takes no margin either: reserving ten pixels around
+        # every card for a shadow that is never drawn is a gap between the cards
+        # that belongs to nothing.
+        self._hairline = bool(palette.hairline)
+        self._shadow = shadow and not self._hairline
+        self._margin = theme.shadow_margin(
+            theme.card_shadow(palette) if self._shadow else None
+        )
         super().__init__(
             master, bg=self._matte, bd=0, highlightthickness=0,
             padx=padding + self._margin, pady=padding + self._margin,
@@ -144,6 +156,8 @@ class Card(tk.Frame):
             size[0] - self._margin * 2, size[1] - self._margin * 2,
             theme.px(self._radius), self._palette.surface, matte=self._matte,
             shadow=theme.card_shadow(self._palette) if self._shadow else None,
+            border=self._palette.border if self._hairline else None,
+            border_width=1,
         )
         try:
             self._plate = ImageTk.PhotoImage(image, master=self)
@@ -394,7 +408,7 @@ class Choice(_Textual, tk.Frame):
         text: str = "", variable: tk.Variable | None = None,
         command: Callable[[], None] | None = None,
         font: tkfont.Font | None = None, wraplength: int = 0, value: str = "",
-        bg: str | None = None,
+        bg: str | None = None, trailing: bool = False,
     ) -> None:
         self._palette = palette
         self._kind = kind
@@ -414,25 +428,48 @@ class Choice(_Textual, tk.Frame):
             self, width=side, height=side, bd=0, highlightthickness=0,
             bg=self._matte, cursor="hand2",
         )
+        # Painted again whenever the mark is given a real size or a real screen.
+        # `<Configure>` alone is not enough and the reason is worth writing down:
+        # the canvas is created with an explicit width and height, so it has its
+        # final size from the moment it exists and `<Configure>` never fires for
+        # it — while `ImageTk.PhotoImage` on a canvas whose window has never been
+        # mapped raises, `_paint` returns, and the option is on screen with no mark
+        # in it and nothing left to ask. A page built while the panel is in the tray
+        # is built in exactly that state.
+        self._box.bind("<Configure>", lambda _e: self._paint())
+        self._box.bind("<Map>", lambda _e: self._paint())
         # Sit the box on the first line's optical centre rather than its top:
         # 1.5 line height leaves the first baseline well below the frame's top.
-        self._box.pack(
-            side="left", anchor="n", padx=(0, theme.px(theme.SPACE)),
-            pady=(max(0, theme.line_height(self._font) // 2 - side // 2), 0),
-        )
+        box_pad = {"pady": (max(0, theme.line_height(self._font) // 2 - side // 2), 0)}
         self._text = tk.Label(
-            self, text=text, font=self._font, bg=self._matte, fg=palette.text,
+            self, text=text, font=self._font, bg=self._matte, fg=palette.text_muted,
             anchor="w", justify="left", wraplength=wraplength or 0,
         )
-        self._text.pack(side="left", anchor="n", fill="x", expand=True)
+        # `trailing` puts the mark after the label instead of before it, which is
+        # what a settings row is: the name of the thing on the left, the control
+        # that changes it on the right, both on one line, the way a form is drawn.
+        # A checkbox with its label beside it reads as a checkbox list, which is a
+        # different thing and is what the first two themes are.
+        if trailing:
+            self._text.pack(side="left", anchor="n", fill="x", expand=True)
+            self._box.pack(
+                side="right", anchor="n", padx=(theme.px(theme.SPACE), 0), **box_pad
+            )
+        else:
+            self._box.pack(side="left", padx=(0, theme.px(theme.SPACE)), **box_pad)
+            self._text.pack(side="left", anchor="n", fill="x", expand=True)
         # The wrap is re-measured against the width this control is actually given,
         # not against the width the page was planned at. A `tk.Label` with a
         # `wraplength` does not re-wrap when it is handed less room than it asked
         # for: it keeps the line breaks it had and clips the last word off. In a
-        # three column settings page that read «Печатать в активное с…», while the
-        # page's own arithmetic said there was room for the whole sentence.
+        # three column settings page that read «Печатать в активное с…» — the
+        # page's own arithmetic said 166 px and the card offered 160.
         self._wraplength = wraplength or 0
+        # The last width this was measured at, so a move does not count as a
+        # resize and a settling grid does not re-wrap on every pass.
+        self._last_width = 0
         self.bind("<Configure>", self._on_frame)
+
         for widget in (self._box, self._text, self):
             widget.bind("<Button-1>", self._toggle)
             widget.bind("<Enter>", self._enter)
@@ -458,17 +495,42 @@ class Choice(_Textual, tk.Frame):
         «Печатать в активное окно» to «Печатать в активное с…» while the page's own
         arithmetic said there was room for it.
 
+        Only for a label that was **given** more or less room than it asked for. A
+        label packed at its own width — the one in a radio row, in a title row, on a
+        tab strip — has nothing to be re-measured against, and treating its own
+        request as the measurement is a loop: the wrap sets the request, the request
+        sets the wrap, and a three column page never finishes laying out.
+
         Below `MIN_LABEL` the width is left alone: that is a card squeezed to
         nothing rather than a card being re-measured, and a `wraplength` of nine
         pixels makes every label one character per line.
+
+        Two dampers, and both are needed. `<Configure>` fires for a **move** as
+        well as for a resize, and a grid that is still settling fires it dozens of
+        times; and a wrap that changes a label's height changes the height of the
+        row it is in, which changes the column it sits in, which changes the width
+        this handler is measuring. Measuring to the pixel turned that into three
+        hundred repaints and six seconds for one page. Eight pixels is below
+        anything anyone can read as a difference and above the wobble, so the loop
+        settles on the first pass instead of hunting for an exact answer to a
+        question whose inputs are moving.
         """
         if event.widget is not self:
             return
-        available = event.width - theme.px(CHECK_BOX) - theme.px(theme.SPACE)
-        if available < self.MIN_LABEL or abs(available - self._wraplength) <= 1:
+        info = self._text.pack_info()
+        if str(info.get("fill")) != "x" or not info.get("expand"):
             return
-        self._wraplength = available
-        self._text.configure(wraplength=available)
+        if abs(event.width - self._last_width) < 8:
+            return
+        available = event.width - theme.px(CHECK_BOX) - theme.px(theme.SPACE)
+        if available < self.MIN_LABEL:
+            return
+        self._last_width = event.width
+        target = available - available % 8
+        if abs(target - self._wraplength) <= 1:
+            return
+        self._wraplength = target
+        self._text.configure(wraplength=target)
 
     def _forget(self, _event=None) -> None:
         """Let go of the variable when this widget is destroyed.
@@ -1084,11 +1146,435 @@ class HistoryRow(tk.Frame):
         return self._body.cget("text")
 
 
+# Dropdowns.
+
+
+# One row of an open list, and the most of them that are shown before the list
+# starts to scroll. Six is the point where a device list stops being a short thing
+# and a card has to be told the difference between "a few inputs" and "every sound
+# endpoint this machine has".
+SELECT_ROW = 34
+SELECT_MAX_ROWS = 6
+# The gap between the field and the list it opens, in design pixels. Small, so the
+# list reads as coming out of the field rather than as a separate window.
+SELECT_GAP = 4
+
+
+class Select(_Textual, tk.Canvas):
+    """A closed field that opens into a list, and nothing else.
+
+    A dropdown rather than a row of radio buttons, and the reason is the length of
+    what it chooses between: a machine with a headset, a monitor's microphone, two
+    Realtek endpoints and a Bluetooth device has six inputs, and a radio list of
+    six takes the whole card and pushes the rest of the page off it. The list is
+    also what the setting is: a device is one value out of many, and one control
+    that shows which one it is answers the question in one line.
+
+    Not a `ttk.Combobox`. That would be square, its arrow would be the theme's
+    rather than this one's, and the open list would be drawn by `clam` — the same
+    objection every widget in this file exists to answer. So the button is a canvas
+    painted from `theme` and the list is a borderless window painted the same way,
+    and both repaint on hover.
+
+    Read only in the sense that there is nothing to type: the field takes a click,
+    the list takes a click, and the keyboard can open the list and walk it.
+    """
+
+    def __init__(
+        self, master: tk.Misc, *, palette: theme.Palette,
+        values: Sequence[str] = (), index: int = 0,
+        command: Callable[[], None] | None = None, variable: tk.Variable | None = None,
+        width: int = 0, bg: str | None = None, font: tkfont.Font | None = None,
+    ) -> None:
+        self._palette = palette
+        self._values = tuple(values)
+        self._index = index if 0 <= index < len(self._values) else 0
+        self._command = command
+        self._variable = variable
+        self._font = font or theme.ui(TYPE_BODY)
+        self._matte = bg or palette.surface
+        self._hover = False
+        self._open = False
+        self._popup: tk.Toplevel | None = None
+        self._plate: ImageTk.PhotoImage | None = None
+        super().__init__(
+            master, height=theme.px(SELECT_ROW), width=theme.px(width) if width else 12,
+            bd=0, highlightthickness=0, bg=self._matte, cursor="hand2", takefocus=1,
+        )
+        self.bind("<Button-1>", self._toggle)
+        self.bind("<Enter>", self._enter)
+        self.bind("<Leave>", self._leave)
+        self.bind("<FocusIn>", lambda _e: self._paint())
+        self.bind("<FocusOut>", lambda _e: self._paint())
+        self.bind("<Key>", self._key)
+        self._trace: str | None = None
+        if variable is not None:
+            self._trace = variable.trace_add("write", lambda *_: self._from_variable())
+        self._from_variable()
+        self.bind("<Configure>", lambda _e: self._paint())
+
+    # What it holds.
+
+    @property
+    def value(self) -> str:
+        """The chosen value, or an empty string when there is nothing to choose."""
+        if not self._values:
+            return ""
+        return self._values[min(self._index, len(self._values) - 1)]
+
+    @property
+    def index(self) -> int:
+        return self._index
+
+    def set_index(self, index: int, *, fire: bool = True) -> None:
+        """Choose by position. Out of range is clamped, not raised."""
+        if not self._values:
+            return
+        index = max(0, min(int(index), len(self._values) - 1))
+        changed = index != self._index
+        self._index = index
+        if self._variable is not None:
+            self._variable.set(self.value)
+        self._paint()
+        if changed and fire and self._command is not None:
+            self._command()
+
+    def _set_text(self, value: str) -> None:
+        """The label is the chosen value, so setting the text chooses it."""
+        if value in self._values:
+            self.set_index(self._values.index(value), fire=False)
+
+    def _get_text(self) -> str:
+        return self.value
+
+    def _from_variable(self) -> None:
+        if self._variable is None:
+            return
+        wanted = str(self._variable.get())
+        if wanted in self._values and self._values.index(wanted) != self._index:
+            self._index = self._values.index(wanted)
+        self._paint()
+
+    # How it looks.
+
+    def _chevron(self, x: int, y: int, size: int, colour: str) -> None:
+        """The arrow, drawn rather than taken from the theme's own."""
+        self.create_line(x, y, x + size / 2, y + size / 2, x + size, y,
+                         fill=colour, width=1.6, capstyle="round",
+                         joinstyle="round")
+
+    def _paint(self) -> None:
+        p = self._palette
+        width = max(self.winfo_width(), 1)
+        height = max(self.winfo_height(), theme.px(SELECT_ROW))
+        accent = p.accent if (self._hover or self.focus_get() is self) else p.border
+        try:
+            self._plate = ImageTk.PhotoImage(
+                theme.surface(width, height, theme.px(theme.RADIUS_CONTROL),
+                              p.surface, matte=self._matte, border=accent,
+                              border_width=1),
+                master=self,
+            )
+        except tk.TclError:
+            log.debug("select plate is gone", exc_info=True)
+            return
+        self.delete("all")
+        self.create_image(0, 0, anchor="nw", image=self._plate)
+        text = self.value
+        if text:
+            self.create_text(
+                theme.px(theme.SPACE), height / 2, anchor="w",
+                text=text, font=self._font, fill=p.text,
+            )
+        side = theme.px(10)
+        self._chevron(width - theme.px(theme.SPACE) - side, height / 2 - side / 2,
+                      side, p.text_muted)
+
+    def _enter(self, _event=None) -> None:
+        self._hover = True
+        self._paint()
+
+    def _leave(self, _event=None) -> None:
+        self._hover = False
+        self._paint()
+
+    # Opening.
+
+    def _toggle(self, _event=None) -> str:
+        if not self._values:
+            return "break"
+        if self._open:
+            self.close()
+        else:
+            self.open()
+        return "break"
+
+    def _key(self, event) -> str | None:
+        """Open with Return or Space, walk with the arrows, choose with Return."""
+        key = event.keysym
+        if key in ("Return", "space", "Down"):
+            if not self._open:
+                self.open()
+                return "break"
+        if key == "Escape" and self._open:
+            self.close()
+            return "break"
+        if key == "Up" and not self._open:
+            self.set_index(self._index - 1)
+            return "break"
+        if key == "Down" and self._open:
+            return None
+        return None
+
+    def open(self) -> None:
+        """Show the list under the field, or close it if it is already showing."""
+        if self._open or not self._values:
+            self.close()
+            return
+        self.focus_set()
+        self._popup = _SelectList(
+            self, values=self._values, index=self._index,
+            on_choose=self._chosen, on_dismiss=self.close,
+        )
+        self._open = True
+        self._popup.place_below(self)
+
+    def _chosen(self, index: int) -> None:
+        self.close()
+        self.set_index(index)
+
+    def close(self) -> None:
+        popup, self._popup = self._popup, None
+        self._open = False
+        if popup is not None:
+            try:
+                popup.destroy()
+            except tk.TclError:
+                log.debug("the select list is already gone", exc_info=True)
+        self._paint()
+
+    def destroy(self) -> None:
+        self.close()
+        # The trace goes with the widget. It is on the panel's variable, which
+        # outlives this control — a settings page rebuilt for a language or a theme
+        # throws this one away and makes another — and a trace left behind fires
+        # into a canvas that is no longer there, which Tk answers from inside a
+        # callback: the exception is printed and swallowed, and the dropdown stops
+        # following the value with nothing in the log to say why.
+        if self._trace is not None and self._variable is not None:
+            try:
+                self._variable.trace_remove("write", self._trace)
+            except tk.TclError:
+                log.debug("the select trace is gone", exc_info=True)
+            self._trace = None
+        super().destroy()
+
+
+class _SelectList(tk.Toplevel):
+    """The open list: a borderless window painted from `theme`, over everything.
+
+    A window rather than a row of widgets inside the card, because it has to be
+    able to be taller than the card and to sit on top of the panel and the tray and
+    whatever else happens to be under the pointer. It grabs the pointer while it is
+    open, so a click anywhere else closes it — which is what every dropdown on every
+    platform does, and a list that stays open behind you is a trap.
+    """
+
+    PAD = 4
+
+    def __init__(self, owner: Select, *, values: Sequence[str], index: int,
+                 on_choose: Callable[[int], None],
+                 on_dismiss: Callable[[], None]) -> None:
+        super().__init__(owner)
+        self._owner = owner
+        self._values = tuple(values)
+        self._on_choose = on_choose
+        self._on_dismiss = on_dismiss
+        self._palette = owner._palette
+        self._font = owner._font
+        self._index = index
+        self._hover: int | None = None
+        self._first = 0
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        self.configure(bg=self._palette.bg)
+        self._canvas = tk.Canvas(
+            self, bd=0, highlightthickness=0, bg=self._palette.surface,
+            height=self._height(), width=self._width(),
+        )
+        self._canvas.pack(fill="both", expand=True)
+        self._plate: ImageTk.PhotoImage | None = None
+        self._canvas.bind("<Motion>", self._motion)
+        self._canvas.bind("<Leave>", lambda _e: self._hover_off())
+        self._canvas.bind("<Button-1>", self._click)
+        self._canvas.bind("<MouseWheel>", self._wheel)
+        self._paint()
+
+    def _row_height(self) -> int:
+        return theme.px(SELECT_ROW)
+
+    def _visible(self) -> int:
+        return min(len(self._values), SELECT_MAX_ROWS)
+
+    def _height(self) -> int:
+        return self._visible() * self._row_height() + self.PAD * 2
+
+    def _width(self) -> int:
+        return max(self._owner.winfo_width(), theme.px(180))
+
+    def place_below(self, owner: Select) -> None:
+        """Under the field, or above it when there is no room underneath."""
+        width, height = self._width(), self._height()
+        x = owner.winfo_rootx()
+        y = owner.winfo_rooty() + owner.winfo_height() + theme.px(SELECT_GAP)
+        screen_h = self.winfo_screenheight()
+        if y + height > screen_h:
+            y = max(0, owner.winfo_rooty() - height - theme.px(SELECT_GAP))
+        screen_w = self.winfo_screenwidth()
+        if x + width > screen_w:
+            x = max(0, screen_w - width)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+        self.update_idletasks()
+        # Dismissed by watching the pointer rather than by grabbing it. A grab is
+        # the documented way to do this and it is also a way to make the whole
+        # process sit and wait: `update()` inside a grab blocks until the grab is
+        # released, so anything that draws or photographs the window while the list
+        # is open stops dead. Binding one button on the application instead is the
+        # same behaviour with none of the waiting.
+        self._owner.bind_all("<Button-1>", self._outside, add="+")
+        self._owner.bind_all("<Escape>", self._escape, add="+")
+
+    def _outside(self, event) -> None:
+        """A click anywhere but the list and the field closes it."""
+        widget = self._owner.nametowidget(event.widget) if event.widget else None
+        if widget is not None and self._is_ours(widget):
+            return
+        self._dismiss()
+
+    def _is_ours(self, widget: tk.Misc) -> bool:
+        if widget is self or widget is self._owner:
+            return True
+        try:
+            path = str(widget)
+        except Exception:
+            return False
+        return path.startswith(str(self))
+
+    # Painting and hit-testing.
+
+    def _paint(self) -> None:
+        p = self._palette
+        width, height = self._width(), self._height()
+        try:
+            self._plate = ImageTk.PhotoImage(
+                theme.surface(
+                    width, height, theme.px(theme.RADIUS_CONTROL), p.surface_alt,
+                    matte=p.bg,
+                    border=p.border if p.hairline else None, border_width=1,
+                    shadow=None if p.hairline else theme.card_shadow(p),
+                ),
+                master=self._canvas,
+            )
+        except tk.TclError:
+            log.debug("the select list plate is gone", exc_info=True)
+            return
+        c = self._canvas
+        c.delete("all")
+        c.create_image(0, 0, anchor="nw", image=self._plate)
+        row = self._row_height()
+        for position in range(self._visible()):
+            value = self._values[self._first + position]
+            top = self.PAD + position * row
+            if self._first + position == self._index:
+                c.create_rectangle(
+                    1, top, width - 1, top + row,
+                    fill=p.accent_soft, outline="",
+                )
+            elif self._hover == self._first + position:
+                c.create_rectangle(1, top, width - 1, top + row,
+                                   fill=p.surface_hover, outline="")
+            c.create_text(
+                theme.px(theme.SPACE), top + row / 2, anchor="w",
+                text=value, font=self._font,
+                fill=p.text if self._first + position == self._index else p.text_muted,
+            )
+
+    def _row_at(self, y: int) -> int | None:
+        if not self.PAD <= y < self._height() - self.PAD:
+            return None
+        position = (y - self.PAD) // self._row_height()
+        if not 0 <= position < self._visible():
+            return None
+        return self._first + position
+
+    def _motion(self, event) -> None:
+        found = self._row_at(event.y)
+        if found != self._hover:
+            self._hover = found
+            self._paint()
+
+    def _hover_off(self) -> None:
+        if self._hover is not None:
+            self._hover = None
+            self._paint()
+
+    def _click(self, event) -> str:
+        found = self._row_at(event.y)
+        if found is None:
+            self._dismiss()
+            return "break"
+        self._on_choose(found)
+        return "break"
+
+    def _wheel(self, event) -> str:
+        """Scroll the list, and keep the chosen row on screen while doing it."""
+        last = len(self._values) - self._visible()
+        if last <= 0:
+            return "break"
+        self._first = max(0, min(last, self._first + (-1 if event.delta > 0 else 1)))
+        self._paint()
+        return "break"
+
+    def _escape(self, _event=None) -> str:
+        self._dismiss()
+        return "break"
+
+    def _dismiss(self) -> None:
+        self._release()
+        self._on_dismiss()
+
+    def _release(self) -> None:
+        """Take the two bindings back off the application.
+
+        `unbind_all` takes the command as a **function**, not as the string that
+        was bound, and it raises rather than doing nothing when it is not there:
+        a dropdown that closed twice would otherwise leave its handler in place
+        forever, and the next dropdown opened anywhere would inherit it.
+        """
+        for sequence, handler in (("<Button-1>", self._outside),
+                                  ("<Escape>", self._escape)):
+            try:
+                self._owner.unbind_all(sequence, handler)
+            except (tk.TclError, TypeError, ValueError):
+                log.debug("the select list handler is already unbound",
+                          exc_info=True)
+
+    def destroy(self) -> None:
+        self._release()
+        super().destroy()
+
+
 # Tabs.
 
 
 class TabLabel(_Textual, tk.Canvas):
-    """One pill in the tab strip: quiet until hovered, a raised card when selected."""
+    """One pill in the tab strip: quiet until hovered, a raised card when selected.
+
+    The strip is the one place a theme's own voice is heard before anything has
+    been read, so the hairline themes set it in the monospaced face in capitals —
+    the same treatment the studio design gives every group heading — while the
+    themes with a shadow keep the interface face, which is what they are.
+    """
 
     HEIGHT = 34
     PADDING = 14
@@ -1096,8 +1582,10 @@ class TabLabel(_Textual, tk.Canvas):
     def __init__(self, master: tk.Misc, *, palette: theme.Palette, text: str = "",
                  command: Callable[[], None] | None = None) -> None:
         self._palette = palette
-        self._label = text
-        self._font = theme.ui(TYPE_BODY, "bold")
+        self._caps = bool(palette.hairline)
+        self._label = self._cased(text)
+        self._font = (theme.mono(TYPE_BODY, medium=True) if self._caps
+                      else theme.ui(TYPE_BODY, "bold"))
         self._command = command
         self._hover = False
         self._selected = False
@@ -1112,12 +1600,15 @@ class TabLabel(_Textual, tk.Canvas):
         self.bind("<Configure>", lambda _e: self._paint())
         self._paint()
 
+    def _cased(self, value: str) -> str:
+        return value.upper() if self._caps else value
+
     def _natural_width(self) -> int:
         pad = theme.px(self.PADDING) * 2
         return theme.measure(self._font, self._label) + pad
 
     def _set_text(self, value: str) -> None:
-        self._label = value
+        self._label = self._cased(value)
         self.configure(width=self._natural_width())
         self._paint()
 
@@ -1504,6 +1995,23 @@ class Scroller(tk.Frame):
             return
         self.canvas.itemconfigure(self._window, width=event.width)
 
+    def to_top(self) -> None:
+        """Put the page at its first line.
+
+        A canvas has no idea where the top is in a content taller than itself:
+        `yview_moveto(0.0)` is the fraction of the whole that the top edge sits
+        at, and for a page twice as tall as the window that fraction is negative.
+        Passed a negative fraction Tk clamps it, but leaning on the clamp is how
+        a page comes to open showing its middle. Moving by whole pages until the
+        view stops moving is what cannot be off by a scroll region that has not
+        been measured yet.
+        """
+        while True:
+            before = self.canvas.yview()[0]
+            self.canvas.yview_scroll(-1, "pages")
+            if self.canvas.yview()[0] >= before:
+                break
+
     def _scroll_by(self, what: str, amount: float = 0.0) -> None:
         if what == "moveto":
             self.canvas.yview_moveto(amount)
@@ -1571,6 +2079,9 @@ class Scroller(tk.Frame):
 TOAST_MS = 1800
 # How far above the bottom edge of whatever it is shown over the toast sits.
 TOAST_INSET = 28
+# A toast is a pill: the radius is half its height, so the plate is a stadium and
+# the corner radius is whatever `theme.surface` clamps it to.
+PILL = 999
 
 
 class Toast(tk.Toplevel):
@@ -1608,7 +2119,7 @@ class Toast(tk.Toplevel):
         self.configure(bg=palette.bg)
         self._card = Card(
             self, palette=palette, padding=theme.SPACE_SM,
-            radius=theme.RADIUS_CONTROL,
+            radius=PILL,
         )
         self._card.pack(fill="both", expand=True)
         self._label = body(
@@ -1719,6 +2230,35 @@ def caption(
     return tk.Label(
         master, text="", font=theme.ui(size), bg=bg or palette.surface,
         fg=palette.text_subtle, anchor="w", justify="left",
+    )
+
+
+def label(
+    master: tk.Misc, *, palette: theme.Palette, size: int = TYPE_LABEL,
+    bg: str | None = None,
+) -> tk.Label:
+    """A card's title: the interface face at its smallest, in caps, muted.
+
+    The studio design sets a group heading in small monospace capitals, which is
+    what tells a settings page where one group stops and the next begins. Set in
+    the interface face rather than the monospaced one because this is a heading:
+    monospace caps at ten pixels are a label for a form, not a heading, and the
+    monospace face is already carrying every control on the page.
+    """
+    return tk.Label(
+        master, text="", font=theme.ui(size, "bold"), bg=bg or palette.surface,
+        fg=palette.text_muted, anchor="w", justify="left",
+    )
+
+
+def title_label(
+    master: tk.Misc, *, palette: theme.Palette, size: int = TYPE_LABEL,
+    bg: str | None = None,
+) -> tk.Label:
+    """A group heading in the monospaced face, in caps. The studio's own line."""
+    return tk.Label(
+        master, text="", font=theme.mono(size, medium=True), bg=bg or palette.surface,
+        fg=palette.text_muted, anchor="w", justify="left",
     )
 
 

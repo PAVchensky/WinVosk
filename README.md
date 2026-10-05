@@ -183,7 +183,7 @@ While a recording runs, a small dark chip sits in the middle of the screen with
 eleven bars and an elapsed timer. It never takes the focus, so the words still go
 into your document and not into the chip.
 
-<img src="docs/img/chip.gif" width="348" alt="The recording chip: eleven thin pink bars over an elapsed clock, animating while a recording is running">
+<img src="docs/img/chip.gif" width="348" alt="The recording chip: eleven thin bars in the theme's accent over an elapsed clock, animating while a recording is running">
 
 **You can change the combination** in **Settings**; see
 [Settings](#settings).
@@ -230,7 +230,7 @@ taller than the window on a small screen, so it scrolls: the wheel over it, or t
 scrollbar, takes you down to **Language**, **Appearance** and **Records** at the
 bottom. See below.
 
-<img src="docs/img/panel-settings.png" width="46%" alt="The Settings tab in Russian: the dictation key across the top, then the three switches for where the text goes beside the recording-device picker, and the startup entry, the language selector, the theme switch and the two record switches below">
+<img src="docs/img/panel-settings.png" width="46%" alt="The Settings tab in Russian: the dictation key across the top, then the three switches for where the text goes beside the recording-device dropdown, and the startup entry, the language options, the three themes and the two record switches below">
 
 **History** — the last ten finished sessions, newest first. Double-click a row to
 copy that record to the clipboard; a card appears over the panel to say that it
@@ -309,12 +309,29 @@ why the first syllable of a recording is not lost to start-up time.
 
 ### Appearance
 
-**Dark theme** — the panel, the chip and the tray icon repaint in the other
-palette. It is stored in `settings.json` as `theme`, `light` or `dark`, and the
-machine gets the light one until it says otherwise. Nothing else changes: the
+**Theme** — the panel, the chip and the tray icon repaint in the palette you pick.
+Three are shipped, as three options in one group rather than a switch, because they
+are three answers to one question:
+
+- **Studio** — warm near-black, amber accent, hairline rules. This is what the
+  panel looks like on a machine that has never chosen anything, and the same
+  design as the pictures on this page.
+- **Light** — a light grey page with white cards.
+- **Dark** — the neutral dark grey.
+
+It is stored in `settings.json` as `theme`: `studio`, `light` or `dark`. A file
+that already says `light` or `dark` keeps that panel, so upgrading changes nothing
+for a machine that had already chosen. Nothing else changes with the theme: the
 transcript, the recording state and the switch positions all survive a switch the
-way they survive a language change, and the switch itself is in force
-immediately.
+way they survive a language change, and the new palette is in force immediately —
+including the chip, which is repainted in place rather than rebuilt, so a theme
+change in the middle of a recording leaves the recording alone.
+
+The panel ships with its own typefaces, so the design does not depend on what the
+machine happens to have installed: Space Grotesk for the text and JetBrains Mono
+for the model name, the timers and the readouts. They are registered with the
+running application only. Nothing is installed into Windows, and both families
+fall back to what the machine has if the files are missing.
 
 ### Checking your own words
 
@@ -449,13 +466,14 @@ menu appears, the line above it names the key that got through.
   "write_log": true,
   "write_history": true,
   "language": "en",
-  "theme": "light",
+  "theme": "studio",
   "input_device": null
 }
 ```
 
-`input_device` is `null` for the system default and otherwise the name of a
-recording device — see [Recording device](#recording-device).
+`theme` is `studio`, `light` or `dark`; see [Appearance](#appearance). `input_device`
+is `null` for the system default and otherwise the name of a recording device —
+see [Recording device](#recording-device).
 
 Nothing in that file can stop the app from starting. A missing, malformed or
 wrongly shaped file costs one line in `logs\app.log` and the defaults are used;
