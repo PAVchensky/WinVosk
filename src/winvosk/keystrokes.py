@@ -19,6 +19,7 @@ import ctypes.wintypes as wt
 import logging
 import os
 import time
+from collections.abc import Callable
 
 import pyperclip
 
@@ -78,8 +79,18 @@ user32.SendInput.restype = wt.UINT
 user32.GetForegroundWindow.restype = wt.HWND
 user32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
 user32.GetWindowThreadProcessId.restype = wt.DWORD
+user32.GetKeyboardLayout.argtypes = [wt.DWORD]
+user32.GetKeyboardLayout.restype = wt.HANDLE
+user32.LoadKeyboardLayoutW.argtypes = [wt.LPCWSTR, wt.DWORD]
+user32.LoadKeyboardLayoutW.restype = wt.HANDLE
+user32.ActivateKeyboardLayout.argtypes = [wt.HANDLE, wt.DWORD]
+user32.ActivateKeyboardLayout.restype = wt.HANDLE
+user32.PostMessageW.argtypes = [wt.HWND, ctypes.c_uint, ctypes.c_ulonglong,
+                                ctypes.c_longlong]
+user32.PostMessageW.restype = wt.BOOL
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel32.GetCurrentThreadId.restype = wt.DWORD
 kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wt.BOOL, wt.LPCWSTR]
 kernel32.CreateMutexW.restype = wt.HANDLE
 kernel32.CloseHandle.argtypes = [wt.HANDLE]
@@ -182,6 +193,125 @@ def foreign_in_front() -> bool:
     pid = wt.DWORD()
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
     return pid.value != os.getpid()
+
+
+# How long to let the shell finish a layout change before typing at it, and
+# before restoring it. The request itself is posted rather than sent, so it is
+# handled on the target's own thread some time after it is queued; measured with
+# tools\layout_probe.py, a tenth of a second was not enough for the request to
+# show up in `GetKeyboardLayout` and four was comfortable.
+LAYOUT_SETTLE = 0.4
+LAYOUT_RESTORE_SETTLE = 0.15
+
+WM_INPUTLANGCHANGEREQUEST = 0x0050
+
+
+class LayoutGuard:
+    """Lend the foreground window a keyboard layout for the length of a recording.
+
+    The characters this module sends are `KEYEVENTF_UNICODE`, so the layout of
+    the target cannot change what they become. It matters anyway, because a
+    keyboard hook on the chain is looking at layouts rather than at codepoints:
+    a layout switcher with auto-replace on rewrites what it believes was typed,
+    and on the machine this was found on it turned `содержать одинаковые данные`
+    into `содержат?D>D>/Bd.bm й данное` while the log recorded every character
+    sent as correct Cyrillic. Borrowing a layout for the length of a sentence
+    takes the trigger away without touching a single character.
+
+    Three things make it safe rather than clever:
+
+    - The original layout is read from the target thread and posted back to the
+      same window afterwards, so whatever the user had is what they get. Two
+      toggles would also restore any starting state; this restores the exact one.
+    - Nothing is switched unless a layout was named, so a machine with no
+      switcher and no setting never sees its layout move.
+    - `release` is idempotent and is called from the shutdown path as well as
+      the stop path, because a layout left in English is a user's morning
+      surprise rather than a log line.
+    """
+
+    def __init__(self, layout: "Callable[[], str]") -> None:
+        # A callable and not a string, so the setting is read when a recording
+        # starts rather than when the process did: every other setting in this
+        # application is read from disk on use, and this one is the only value
+        # the guard holds on to.
+        self._read_layout = layout
+        self._window = 0
+        self._previous = 0
+
+    @property
+    def is_armed(self) -> bool:
+        """Whether a layout is configured at all. Empty means never touch it."""
+        try:
+            return bool(str(self._read_layout() or "").strip())
+        except Exception:
+            log.exception("the dictation layout setting could not be read")
+            return False
+
+    @property
+    def is_held(self) -> bool:
+        return bool(self._window)
+
+    def engage(self) -> bool:
+        """Ask the foreground window for the configured layout, and keep the old.
+
+        False when nothing was switched, which is the ordinary case: no layout
+        configured, the panel rather than a target in front, the target already
+        on that layout, or the shell declining the request. None of those are
+        errors, so none of them are logged as one.
+        """
+        if not self.is_armed or self._window:
+            return False
+        name = str(self._read_layout() or "").strip()
+        window = int(user32.GetForegroundWindow() or 0)
+        if not window or not foreign_in_front():
+            return False
+        thread = user32.GetWindowThreadProcessId(window, None)
+        previous = int(user32.GetKeyboardLayout(thread) or 0)
+        wanted = self._load(name)
+        if not wanted or wanted == previous:
+            return False
+        # `LoadKeyboardLayoutW` also activates the layout for the *calling*
+        # thread as a side effect. This process has no text of its own except
+        # the hotkey capture field, so it is put back rather than left changed.
+        own = int(user32.GetKeyboardLayout(kernel32.GetCurrentThreadId()) or 0)
+        if not self._post(window, wanted):
+            user32.ActivateKeyboardLayout(own, 0) if own else None
+            return False
+        time.sleep(LAYOUT_SETTLE)
+        if int(user32.GetKeyboardLayout(thread) or 0) != wanted:
+            # The shell did not take it. Forget the window so `release` cannot
+            # post a layout change that was never ours to undo.
+            user32.ActivateKeyboardLayout(own, 0) if own else None
+            log.info("the layout did not change to %s, leaving it alone", name)
+            return False
+        if own:
+            user32.ActivateKeyboardLayout(own, 0)
+        self._window = window
+        self._previous = previous
+        log.info("layout %s borrowed for the recording, 0x%08X put back afterwards",
+                 name, previous)
+        return True
+
+    def release(self) -> bool:
+        """Put the remembered layout back on the window it was taken from."""
+        window, previous = self._window, self._previous
+        self._window = self._previous = 0
+        if not window or not previous:
+            return False
+        ok = self._post(window, previous)
+        time.sleep(LAYOUT_RESTORE_SETTLE)
+        log.info("layout put back on 0x%08X%s", window, "" if ok else " (refused)")
+        return ok
+
+    @staticmethod
+    def _load(name: str) -> int:
+        return int(user32.LoadKeyboardLayoutW(name, 1) or 0)
+
+    @staticmethod
+    def _post(window: int, hkl: int) -> bool:
+        return bool(user32.PostMessageW(
+            window, WM_INPUTLANGCHANGEREQUEST, 0, hkl))
 
 
 def copy_to_clipboard(text: str) -> bool:

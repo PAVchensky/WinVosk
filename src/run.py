@@ -72,6 +72,7 @@ class App:
         self._recording = False
         self._closing = False
         self._session = Session()
+        self._layout = keystrokes.LayoutGuard(settings.dictate_layout())
 
         model_path = config.resolve_model()
         self._engine = DictationEngine(
@@ -520,6 +521,11 @@ class App:
             live = settings.live_typing()
             self._words = vocabulary.own_words(config.PHRASES_FILE)
             self._panel.set_word_count(len(self._words))
+            # Before the first character can arrive, and only here: `_on_state`
+            # brackets every way a recording can end - the key coming up, a
+            # second press in toggle mode, and the session ceiling - so this is
+            # the one place the layout has to be handed back.
+            self._layout.engage()
             self._session.begin(live)
             if live:
                 self._panel.set_status(text.t("recording_live"))
@@ -551,11 +557,15 @@ class App:
 
     def _on_stop(self, event: dict) -> None:
         live = self._session.live
+        # The tail is typed first and the layout handed back after it, so the
+        # last characters of a sentence are typed under the same conditions as
+        # every other one of them.
         tail = self._corrected(str(event.get("tail", "")))
         if tail.strip():
             self._session.add_utterance(tail)
             if live:
                 self._session.typer.apply(tail, boundary=True)
+        self._layout.release()
         self._session.finish()
         text = self._session.total.strip()
         self._panel.set_text(text, "")
@@ -760,6 +770,10 @@ class App:
             return
         self._closing = True
         log.info("shutting down")
+        # A layout left in English is a user's next morning rather than a log
+        # line, so the shutdown path puts it back even though `_on_stop` already
+        # did. `release` is idempotent, so the ordinary case is one no-op.
+        self._layout.release()
         self._engine.close()
         self._stop_capture()
         if self._hotkey is not None:
@@ -1054,6 +1068,11 @@ def _diagnose() -> int:
         f"({'everything' if settings.logging_enabled() else 'errors only'})",
         f"settings    : {settings.SETTINGS_FILE}",
         f"insertion   : simulated keystrokes, delay {config.TYPE_DELAY}s",
+        # Said here because it is a setting whose absence looks identical to a
+        # setting that is not working: an empty value means the layout is never
+        # touched, and a filled one is the only evidence the feature is armed.
+        f"dictation   : layout {settings.dictate_layout() or 'untouched'}"
+        f" while recording",
         f"max session : {config.MAX_SESSION_SECONDS:.0f}s",
         f"records from: {device_name(index)} [{index}] "
         f"({chosen or 'the system default'}; "

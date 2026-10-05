@@ -1327,6 +1327,46 @@ leaves the space standing where the word grew — «ии» reaches the screen as
 cannot be remapped by a layout, but they can still be swallowed, so no insertion
 method is proof against a third party hook; fewer Backspaces is fewer chances.
 
+**A keyboard layout switcher can rewrite what arrives.** Every character above
+is sent as `KEYEVENTF_UNICODE`, which the layout of the target cannot change: a
+Latin layout produces Russian text correctly. But a switcher on the chain is
+watching *layouts*, not codepoints, and one with auto-replace on will rewrite
+what it believes was typed. Measured on the machine this was found on: Punto
+Switcher turned `содержать одинаковые данные` into `содержат?D>D>/Bd.bm й данное`
+while `logs\app.log` recorded every character sent as correct Cyrillic, and the
+user watched the tray icon switching. Two of its settings rewrite input —
+`AutoReplaceAlways` and `DisablePreHandle`, in
+`%APPDATA%\Yandex\Punto Switcher\User Data\preferences.xml` — and
+`Data\default-conf.json` in its install directory carries
+`hook.patch_layout_funcs: ["win10"]`, which is why its hook acts on the layout
+at all.
+
+Turning auto-replace off in that program's own settings removes the corruption
+with no change here. **It is not always an option**: the switch is not written
+to disk unless the program is closed cleanly, and a machine that needs the
+switcher for work cannot simply leave it off. So there is a second answer, in
+`settings.json`:
+
+```json
+"dictate_layout": "00000409"
+```
+
+The layout the foreground window is asked for while a recording runs, in any
+form `LoadKeyboardLayout` accepts (`00000409`, `0409`, `en-US`). The layout that
+was there before is read from the target thread and posted back to the same
+window when the recording ends, so whatever the user had is what they get. It
+is engaged from the one place every kind of recording starts and stops, so the
+key coming up, a second press in toggle mode and the session ceiling all put it
+back, and the shutdown path does it again in case none of them ran. Empty means
+the layout is never touched at all, which is the default: a machine with no
+switcher must not see its layout indicator move every time a recording starts.
+
+Two guard rails on it. The request is `WM_INPUTLANGCHANGEREQUEST` to the
+foreground window, so it only does anything while a real target is in front and
+the app's own panel is never switched. And the layout is verified to have
+actually changed before it is recorded as taken, so a shell that declined the
+request leaves nothing held and consequently nothing to hand back.
+
 Two guard rails:
 
 - If the foreground window belongs to this app, nothing is typed and the

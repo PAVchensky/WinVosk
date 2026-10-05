@@ -1,4 +1,4 @@
-﻿# WinVosk
+# WinVosk
 
 Offline Russian dictation for Windows. Global hotkey, tray icon, always-on-top
 panel, and the recognised text is typed into the window you were typing in.
@@ -21,7 +21,7 @@ repository.
 ## Release
 
 `VERSION` in `src\winvosk\config.py` is the single source of the release number,
-currently **1.9.1**. It is not a comment and not a tag nobody reads: `--diagnose`
+currently **1.9.2**. It is not a comment and not a tag nobody reads: `--diagnose`
 prints it on its first line, the panel puts it in the window title, and the
 own-word report and the frozen `--diagnose` dialog carry it.
 `winvosk\__init__.py` derives `__version__` from it rather than repeating it —
@@ -169,7 +169,7 @@ Get-Content .\logs\<yyyy-mm-dd>.txt -Encoding UTF8 -Tail 5
 Check 2 must print a `base dir` line that is the checkout root, currently
 `base dir    : D:\AI\Vosk`; anything else means the app resolved paths somewhere
 else and the rest of the bar is meaningless. Its first line must be
-`WinVosk   : 1.9.1`, which is the cheap way to notice that `VERSION` was not bumped.
+`WinVosk   : 1.9.2`, which is the cheap way to notice that `VERSION` was not bumped.
 
 Check 3 must print an empty string for silence, never raise. Check 4 must print
 `VERDICT: PASS` twice: once for the hotkey, once for typing, the latter with
@@ -337,6 +337,21 @@ tab selection in `panel.py`.
   owns the foreground nor received the last input, so focus based insertion is
   unreliable by design. Copying the recognised text *out* to the clipboard is a
   separate, optional step and is never how anything is inserted.
+- **A foreign layout switcher rewrites input; `dictate_layout` borrows around
+  it.** Our characters are `KEYEVENTF_UNICODE`, so a target's layout cannot
+  change what they become — but a keyboard hook on the chain is watching
+  *layouts*, and Punto Switcher with `AutoReplaceAlways` on turned
+  `содержать одинаковые данные` into `содержат?D>D>/Bd.bm й данное` while
+  every `typed` value in `app.log` was correct Cyrillic. The fix in that
+  program's own settings is better, and is what a user should try first. It is
+  not always available: the switch is not written to disk unless it is closed
+  cleanly. So `settings.dictate_layout` names a layout the foreground window is
+  lent for the length of a recording, and the one that was there before is read
+  from the target thread and posted back to the same window. **Engage and
+  release it from `_on_state`, which brackets every way a recording can end** —
+  key up, a second press in toggle mode, the session ceiling — and release once
+  more on the way out, because a layout left in English is a user's next
+  morning. Empty by default: never touch a layout nobody asked to change.
 - **The hotkey records while it is held by default, and toggles only when asked.**
   `HotkeyListener` takes both `on_press` and `on_release`; the main key must be
   blocked from keydown until its keyup or key repeat turns one hold into a stream

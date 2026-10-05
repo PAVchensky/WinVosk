@@ -20,7 +20,7 @@ APP_NAME = "WinVosk"
 # without anyone reading a file. Three parts, MAJOR.MINOR.PATCH, all three
 # written: a two part number sorts wrongly in the release list and cannot carry
 # a patch at all.
-VERSION = "1.9.1"
+VERSION = "1.9.2"
 
 # True inside a PyInstaller bundle, where the modules sit in `_internal\` and
 # `__file__` no longer points at the folder the user keeps their files in.

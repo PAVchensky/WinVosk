@@ -38,6 +38,7 @@ HISTORY_KEY = "write_history"
 LANGUAGE_KEY = "language"
 THEME_KEY = "theme"
 DEVICE_KEY = "input_device"
+LAYOUT_KEY = "dictate_layout"
 
 
 def load() -> dict[str, Any]:
@@ -238,6 +239,22 @@ def history_enabled() -> bool:
     switch is off.
     """
     return flag(HISTORY_KEY, config.HISTORY_WRITE_DEFAULT)
+
+
+def dictate_layout() -> str:
+    r"""The keyboard layout to lend the foreground window while dictating.
+
+    Empty by default, and empty means the layout is never touched at all: a
+    machine with no layout switcher and nobody who asked for this must not see
+    its layout indicator move every time a recording starts. The name is whatever
+    `LoadKeyboardLayout` accepts — `00000409`, `0409` or `en-US` all work — and
+    the layout that was there before is put back when the recording ends.
+
+    Read from the file on every use, like every other setting here, so editing
+    it takes effect without a restart and the disk and the memory cannot disagree.
+    """
+    value = load().get(LAYOUT_KEY)
+    return value.strip() if isinstance(value, str) else ""
 
 
 def store_history_enabled(value: bool) -> bool:
