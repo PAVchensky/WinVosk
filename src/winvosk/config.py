@@ -20,7 +20,7 @@ APP_NAME = "WinVosk"
 # without anyone reading a file. Three parts, MAJOR.MINOR.PATCH, all three
 # written: a two part number sorts wrongly in the release list and cannot carry
 # a patch at all.
-VERSION = "1.9.3"
+VERSION = "2.0.0"
 
 # True inside a PyInstaller bundle, where the modules sit in `_internal\` and
 # `__file__` no longer points at the folder the user keeps their files in.
@@ -87,7 +87,7 @@ HISTORY_WRITE_DEFAULT = True
 # the reader and the documentation cannot disagree about "the last ten".
 HISTORY_RECENT = 10
 # The keyboard layout lent to the foreground window for the length of a
-# recording, as a language id. On by default from 1.9.3, because the damage it
+# recording, as a language id. On by default from 2.0.0, because the damage it
 # prevents is not hypothetical: a layout switcher with auto-replace on rewrites
 # what it believes was typed, and on the machine this was found on it turned a
 # Russian sentence into `содержат?D>D>/Bd.bm й данное` while every character sent

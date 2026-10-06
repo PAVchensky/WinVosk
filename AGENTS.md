@@ -21,7 +21,7 @@ repository.
 ## Release
 
 `VERSION` in `src\winvosk\config.py` is the single source of the release number,
-currently **1.9.3**. It is not a comment and not a tag nobody reads: `--diagnose`
+currently **2.0.0**. It is not a comment and not a tag nobody reads: `--diagnose`
 prints it on its first line, the panel puts it in the window title, and the
 own-word report and the frozen `--diagnose` dialog carry it.
 `winvosk\__init__.py` derives `__version__` from it rather than repeating it —
@@ -50,7 +50,7 @@ earlier rule that they rode along with whatever they documented is gone, because
 made the number describe a tree that no longer existed. So after any change,
 `VERSION` is one step from what `main` last said, and
 `.\.venv\Scripts\python.exe .\src\run.py --diagnose` is the cheap way to see that
-it was not forgotten: its first line is `WinVosk   : 1.9.3`.
+it was not forgotten: its first line is `WinVosk   : 2.0.0`.
 
 The working name during a batch of edits does not matter — it is one number for the
 batch, and it is bumped once when the batch is finished, not once per file. What
@@ -179,7 +179,7 @@ Get-Content .\logs\<yyyy-mm-dd>.txt -Encoding UTF8 -Tail 5
 Check 2 must print a `base dir` line that is the checkout root, currently
 `base dir    : D:\AI\Vosk`; anything else means the app resolved paths somewhere
 else and the rest of the bar is meaningless. Its first line must be
-`WinVosk   : 1.9.3`, which is the cheap way to notice that `VERSION` was not bumped.
+`WinVosk   : 2.0.0`, which is the cheap way to notice that `VERSION` was not bumped.
 
 Check 3 must print an empty string for silence, never raise. Check 4 must print
 `VERDICT: PASS` twice: once for the hotkey, once for typing, the latter with
