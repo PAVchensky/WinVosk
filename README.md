@@ -26,6 +26,10 @@
 > **Private by design:** speech recognition runs locally on your CPU. No account,
 > telemetry, cloud API or network call is required.
 
+<p align="center">
+  <img src="docs/img/WinVosk-line.png" alt="A gold sound wave drawn across a dark grid, beside the words SPEAK - IT TYPES, and under them NOTHING LEAVES THE MACHINE">
+</p>
+
 ---
 
 ## TL;DR
@@ -482,6 +486,33 @@ combination that cannot be parsed costs only itself rather than crashing under
 `pythonw.exe` where nobody would see the traceback. **Reset** and
 deleting the file both restore the defaults.
 
+### The keyboard layout during a recording
+
+`dictate_layout`, in `settings.json` next to the exe. It names a language id —
+`00000409` for English, `00000419` for Russian — and it ships as `00000409`.
+
+While a recording runs, the window you are typing into is lent that layout, and
+your own is put back the moment the recording ends. The switch happens on the
+hotkey, before the microphone opens.
+
+This is on by default because of what it prevents. Our characters go out as
+`KEYEVENTF_UNICODE`, so a layout cannot change what they become — but a keyboard
+hook further down the chain is watching *layouts*, and Punto Switcher with
+`AutoReplaceAlways` on turned `содержать одинаковые данные` into
+`содержат?D>D>/Bd.bm й данное` while every `typed` value in the log was correct
+Cyrillic. Lending the window English takes the trigger away.
+
+To switch it off, set it to an empty string:
+
+```json
+"dictate_layout": ""
+```
+
+Every press says what happened in `logs\report.txt`: `borrowed for the
+recording`, `not lent: … did not answer`, or `none configured`. A window that
+never pumps messages cannot be switched from outside, and that is the one case
+where the borrowed layout will not help.
+
 ### Settings that are not switches
 
 These live in `src\winvosk\config.py` and need an editor:
@@ -700,6 +731,10 @@ Check the native rate before blaming the app.
 ---
 
 ## Models and Languages
+
+<p align="center">
+  <img src="docs/img/WinVosk-small.png" alt="The WinVosk mark beside the pinned decoder version, vosk 0.3.45" width="176">
+</p>
 
 WinVosk ships with **Russian** (`vosk-model-small-ru-0.22`, 44 MB). Vosk
 publishes models for **32 languages**, and any of them can be dropped into

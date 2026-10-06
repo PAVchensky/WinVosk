@@ -20,7 +20,7 @@ APP_NAME = "WinVosk"
 # without anyone reading a file. Three parts, MAJOR.MINOR.PATCH, all three
 # written: a two part number sorts wrongly in the release list and cannot carry
 # a patch at all.
-VERSION = "1.9.2"
+VERSION = "1.9.3"
 
 # True inside a PyInstaller bundle, where the modules sit in `_internal\` and
 # `__file__` no longer points at the folder the user keeps their files in.
@@ -86,6 +86,14 @@ HISTORY_WRITE_DEFAULT = True
 # How many records the history tab shows, newest first. One number, so the tab,
 # the reader and the documentation cannot disagree about "the last ten".
 HISTORY_RECENT = 10
+# The keyboard layout lent to the foreground window for the length of a
+# recording, as a language id. On by default from 1.9.3, because the damage it
+# prevents is not hypothetical: a layout switcher with auto-replace on rewrites
+# what it believes was typed, and on the machine this was found on it turned a
+# Russian sentence into `содержат?D>D>/Bd.bm й данное` while every character sent
+# was correct Cyrillic. Set it to "" to switch the feature off, which is the one
+# thing to try on a machine that has no English layout or no switcher at all.
+DICTATE_LAYOUT_DEFAULT = "00000409"
 # The interface language, `text.LANGUAGES`, English unless the user says otherwise.
 LANGUAGE_DEFAULT = text.DEFAULT_LANGUAGE
 # The interface themes and the one a machine with nothing stored gets. Plain

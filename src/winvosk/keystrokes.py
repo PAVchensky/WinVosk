@@ -88,6 +88,10 @@ user32.ActivateKeyboardLayout.restype = wt.HANDLE
 user32.PostMessageW.argtypes = [wt.HWND, ctypes.c_uint, ctypes.c_ulonglong,
                                 ctypes.c_longlong]
 user32.PostMessageW.restype = wt.BOOL
+user32.SendMessageTimeoutW.argtypes = [
+    wt.HWND, ctypes.c_uint, ctypes.c_ulonglong, ctypes.c_longlong,
+    ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_size_t)]
+user32.SendMessageTimeoutW.restype = wt.LPARAM
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 kernel32.GetCurrentThreadId.restype = wt.DWORD
@@ -196,12 +200,19 @@ def foreign_in_front() -> bool:
 
 
 # How long to let the shell finish a layout change before typing at it, and
-# before restoring it. The request itself is posted rather than sent, so it is
-# handled on the target's own thread some time after it is queued; measured with
-# tools\layout_probe.py, a tenth of a second was not enough for the request to
-# show up in `GetKeyboardLayout` and four was comfortable.
-LAYOUT_SETTLE = 0.4
+# before restoring it. The request is now *sent*, not posted, so the target's own
+# thread has already run its handler by the time this is reached and the wait is
+# only the shell's repaint — which is why it dropped from 0.4 s, measured against
+# the posted version, where it was standing in for the request as well. What it
+# costs is microphone time: the borrow happens before the stream opens, so this is
+# the head of the recording that is not recorded.
+LAYOUT_SETTLE = 0.15
 LAYOUT_RESTORE_SETTLE = 0.15
+
+# Bounded wait for the target to answer the request, so an application that has
+# stopped pumping its queue cannot hold the hotkey thread.
+LAYOUT_ANSWER_MS = 300
+SMTO_ABORTIFHUNG = 0x0002
 
 WM_INPUTLANGCHANGEREQUEST = 0x0050
 
@@ -255,35 +266,60 @@ class LayoutGuard:
     def engage(self) -> bool:
         """Ask the foreground window for the configured layout, and keep the old.
 
-        False when nothing was switched, which is the ordinary case: no layout
-        configured, the panel rather than a target in front, the target already
-        on that layout, or the shell declining the request. None of those are
-        errors, so none of them are logged as one.
+        False when nothing was switched. Every one of those cases is logged,
+        because silence here is the one outcome that cannot be diagnosed: a
+        recording that did not borrow a layout reads the same in `app.log` whether
+        the setting was never written, no foreign window was in front, the shell
+        declined the request, or it worked and nothing was printed. One line per
+        press, on the same run that already logs the input device.
         """
-        if not self.is_armed or self._window:
+        try:
+            name = str(self._read_layout() or "").strip()
+        except Exception:
+            log.exception("the dictation layout setting could not be read")
+            name = ""
+        if not name:
+            log.info("layout: none configured, the keyboard is left alone. Set "
+                     "\"dictate_layout\" in settings.json, for example "
+                     "\"00000409\", to lend one for a recording.")
             return False
-        name = str(self._read_layout() or "").strip()
+        if self._window:
+            return False
         window = int(user32.GetForegroundWindow() or 0)
         if not window or not foreign_in_front():
+            log.info("layout %s not borrowed: no foreign window in front", name)
             return False
         thread = user32.GetWindowThreadProcessId(window, None)
         previous = int(user32.GetKeyboardLayout(thread) or 0)
         wanted = self._load(name)
-        if not wanted or wanted == previous:
+        if not wanted:
+            return False
+        if wanted == previous:
+            log.info("layout %s: the window is already on it", name)
             return False
         # `LoadKeyboardLayoutW` also activates the layout for the *calling*
         # thread as a side effect. This process has no text of its own except
         # the hotkey capture field, so it is put back rather than left changed.
         own = int(user32.GetKeyboardLayout(kernel32.GetCurrentThreadId()) or 0)
-        if not self._post(window, wanted):
+        answered = self._request(window, wanted)
+        if not answered:
             user32.ActivateKeyboardLayout(own, 0) if own else None
+            log.info("layout %s not lent: the window 0x%08X did not answer the "
+                     "request at all. A window that never pumps messages — a "
+                     "message-only window, or an app that hangs — cannot be "
+                     "switched from outside.", name, window)
             return False
         time.sleep(LAYOUT_SETTLE)
         if int(user32.GetKeyboardLayout(thread) or 0) != wanted:
             # The shell did not take it. Forget the window so `release` cannot
-            # post a layout change that was never ours to undo.
+            # post a layout change that was never ours to undo. The receiver's
+            # answer is not printed: measured, `DefWindowProc` answers `0x0` for
+            # this message whether or not it applied it, so the layout is the
+            # only thing here that says anything.
             user32.ActivateKeyboardLayout(own, 0) if own else None
-            log.info("the layout did not change to %s, leaving it alone", name)
+            log.info("layout %s not lent: the window 0x%08X answered the request "
+                     "but is still on 0x%08X, so the shell declined it",
+                     name, window, int(user32.GetKeyboardLayout(thread) or 0))
             return False
         if own:
             user32.ActivateKeyboardLayout(own, 0)
@@ -299,19 +335,80 @@ class LayoutGuard:
         self._window = self._previous = 0
         if not window or not previous:
             return False
-        ok = self._post(window, previous)
+        ok, _ = self._request(window, previous)
         time.sleep(LAYOUT_RESTORE_SETTLE)
         log.info("layout put back on 0x%08X%s", window, "" if ok else " (refused)")
         return ok
 
     @staticmethod
     def _load(name: str) -> int:
-        return int(user32.LoadKeyboardLayoutW(name, 1) or 0)
+        """Resolve a layout name to a handle, or 0 when it names nothing here.
+
+        `LoadKeyboardLayoutW` cannot be trusted to report a bad name, and this is
+        measured rather than read, on this machine:
+
+        - `LoadKeyboardLayoutW("en-US")` and `"zz"` do not fail. Both return
+          `0x04090409`, the system default, and activate it for this process. So
+          a name that is merely non-zero would send the user to whatever their
+          default happens to be, in exchange for a typo, and then "restore" a
+          layout that was never lent.
+        - `LoadKeyboardLayoutW("04190419")`, the same digits in the wrong order,
+          is quietly wrong for the same reason: `0x04090409`, not Russian.
+        - `GetLastError()` is no help either. It reads 1400 for a valid
+          `00000409` and 0 for `00000419` on the same machine, so treating it as a
+          failure would reject a layout that is installed and works.
+        - Rejecting anything outside `GetKeyboardLayoutList` is wrong too:
+          `00000420` loads `0x04200420` and works, although it is not installed.
+
+        So the name has to look like a locale id, and the handle has to agree with
+        it. The low 16 bits of an HKL are the language id, and they are the part
+        Windows itself got wrong in every silent case above: `00000409` resolves
+        to `0x04090409`, `00000419` to `0x04190419`, and both survive this test
+        while `04190419` and `en-US` do not.
+        """
+        wanted = name.strip()
+        if not wanted or not all(c in "0123456789abcdefABCDEF" for c in wanted):
+            log.warning("the layout %r is not a language id, so the keyboard is "
+                        "left alone. Use digits, for example 00000409 for "
+                        "English or 00000419 for Russian.", name)
+            return 0
+        if len(wanted) not in (4, 8):
+            log.warning("the layout %r is not 4 or 8 digits, so the keyboard is "
+                        "left alone", name)
+            return 0
+        ctypes.set_last_error(0)
+        hkl = int(user32.LoadKeyboardLayoutW(wanted, 1) or 0)
+        if not hkl or (hkl & 0xFFFF) != int(wanted[-4:], 16):
+            log.warning("the layout %r did not resolve to itself on this machine "
+                        "(got 0x%08X), so the keyboard is left alone",
+                        name, hkl)
+            return 0
+        return hkl
 
     @staticmethod
-    def _post(window: int, hkl: int) -> bool:
-        return bool(user32.PostMessageW(
-            window, WM_INPUTLANGCHANGEREQUEST, 0, hkl))
+    def _request(window: int, hkl: int) -> bool:
+        """Ask a window to take a layout. Returns whether it *answered*, not whether
+        it obeyed: the second question is asked separately, by reading the target
+        thread's layout back, because `DefWindowProc` answers `0x0` for this
+        message either way.
+
+        `SendMessageTimeout` rather than `PostMessage`, because `PostMessage`
+        returns only whether the message reached the queue, and a message that
+        sits in the queue of a window that never pumps one looks exactly like one
+        that was acted on. `SMTO_ABORTIFHUNG` bounds the wait on an application
+        that has stopped pumping. Both transports were measured moving a thread's
+        layout by `tools\\layout_probe.py`; this one is used because it can say
+        whether anything came back.
+
+        Focus is not required, which is worth recording because it was assumed to
+        be for most of the life of this: a window that was never shown, in a
+        thread with no foreground, took the layout from the same message.
+        """
+        answer = ctypes.c_size_t(0)
+        ctypes.set_last_error(0)
+        return bool(user32.SendMessageTimeoutW(
+            window, WM_INPUTLANGCHANGEREQUEST, 0, hkl,
+            SMTO_ABORTIFHUNG, LAYOUT_ANSWER_MS, ctypes.byref(answer)))
 
 
 def copy_to_clipboard(text: str) -> bool:

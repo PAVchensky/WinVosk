@@ -42,6 +42,12 @@ docs/reports/
 docs/competitors.md
 docs/seo_keywords.md
 
+# An older marketing banner, tracked by mistake: no page pointed at it, and it
+# advertises a "6.0 MB executable" while the build reports 5.4 MB. The claim is
+# baked into the pixels, so readme_probe.py cannot see it and no edit fixes
+# it. The honest options were to redraw the image or to stop shipping it.
+docs/img/banner.png
+
 # The full-size banner, kept locally so a smaller one can be regenerated from
 # it. Only the reduced WinVosk_banner.png is tracked; shipping both would put
 # 2.4 MB into the repository for a file nothing renders.
@@ -53,15 +59,13 @@ desktop.ini
 .plan/
 
 
-# Local renders that no page points at: a dark banner, a line banner, two
-# reduced variants, a scratch chip frame and a superseded banner. The images
-# the guides actually embed are whatever git ls-files docs/img lists. The dark
-# banner alone is 6.4 MB, three times the tracked one, so these are kept out
-# rather than committed and deleted afterwards, which would leave them in history
-# for good.
+# Local renders that no page points at: a dark banner at four times the
+# resolution of the tracked one, a superseded banner, a slide from a deck
+# and a scratch chip frame. The images the guides actually embed are
+# whatever git ls-files docs/img lists. The dark banner alone is 6.4 MB, three
+# times the tracked one, so these are kept out rather than committed and
+# deleted afterwards, which would leave them in history for good.
 docs/img/winvosk-banner-dark.png
 docs/img/WinVosk_banner_old.png
-docs/img/WinVosk-line.png
-docs/img/WinVosk-small.png
 docs/img/WinWosk-Private.png
 docs/img/chip2.png

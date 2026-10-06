@@ -554,6 +554,11 @@ def case_toggle_mode(results: list[bool]) -> None:
             app = run.App.__new__(run.App)
             app._commands = queue.Queue()
             app._recording = False
+            # `_hotkey_pressed` borrows the keyboard layout before it puts the
+            # start on the queue, so the guard is part of what a press has to
+            # have. Disarmed here, which is the empty default: a temporary
+            # settings file names no layout, so nothing is ever touched.
+            app._layout = run.keystrokes.LayoutGuard(lambda: "")
             seen: list[str] = []
             for _ in range(presses):
                 app._handle_command("hotkey_press")

@@ -21,7 +21,7 @@ repository.
 ## Release
 
 `VERSION` in `src\winvosk\config.py` is the single source of the release number,
-currently **1.9.2**. It is not a comment and not a tag nobody reads: `--diagnose`
+currently **1.9.3**. It is not a comment and not a tag nobody reads: `--diagnose`
 prints it on its first line, the panel puts it in the window title, and the
 own-word report and the frozen `--diagnose` dialog carry it.
 `winvosk\__init__.py` derives `__version__` from it rather than repeating it —
@@ -29,7 +29,7 @@ a second literal there already disagreed with this one, in a different format.
 
 **The scheme is `MAJOR.MINOR.PATCH` and all three parts are always written.** A
 two part number sorts wrongly in a release list and has nowhere to put a patch.
-**Bump it with every release:**
+**How far to move it:**
 
 - **PATCH** — a fix that changes nothing a user can observe. `1.6.3` → `1.6.4`.
 - **MINOR** — behaviour added, or behaviour changed in a way that is still
@@ -42,9 +42,19 @@ for `input_device` plus the recording device card.
   keys, a hotkey default, a switch that stops existing, the insertion method.
   `1.7.0` → `2.0.0`.
 
-A documentation-only change does not warrant a release of its own; it rides along
-with whatever code change it documents. That is why the number is not bumped for
-every commit, only per release.
+**Bump it with every change that lands, not once per release.** Whatever is on
+`main` is described by `VERSION`, so the number is part of the change rather than
+a separate chore that comes after it: a fix, a probe, a new section in the guides
+and a corrected sentence all move it. Documentation-only changes included — the
+earlier rule that they rode along with whatever they documented is gone, because it
+made the number describe a tree that no longer existed. So after any change,
+`VERSION` is one step from what `main` last said, and
+`.\.venv\Scripts\python.exe .\src\run.py --diagnose` is the cheap way to see that
+it was not forgotten: its first line is `WinVosk   : 1.9.3`.
+
+The working name during a batch of edits does not matter — it is one number for the
+batch, and it is bumped once when the batch is finished, not once per file. What
+matters is that no change lands with a number that was already on `main`.
 
 A release is: `VERSION` bumped, all six checks in § Verification green, the
 bundle rebuilt with `tools\build_exe.py`, the archive staged with
@@ -169,7 +179,7 @@ Get-Content .\logs\<yyyy-mm-dd>.txt -Encoding UTF8 -Tail 5
 Check 2 must print a `base dir` line that is the checkout root, currently
 `base dir    : D:\AI\Vosk`; anything else means the app resolved paths somewhere
 else and the rest of the bar is meaningless. Its first line must be
-`WinVosk   : 1.9.2`, which is the cheap way to notice that `VERSION` was not bumped.
+`WinVosk   : 1.9.3`, which is the cheap way to notice that `VERSION` was not bumped.
 
 Check 3 must print an empty string for silence, never raise. Check 4 must print
 `VERDICT: PASS` twice: once for the hotkey, once for typing, the latter with
@@ -265,6 +275,35 @@ and that a scrolled settings or history tab comes back to its first line and tha
 to `overlay.py`, to the `chip_*` roles in `theme.py`, to `Scroller`, or to the
 tab selection in `panel.py`.
 
+`tools\layout_probe.py` is the twelfth: it needs no microphone and no foreground
+window, and it covers the half of the layout guard that a windowless shell can
+reach — that a name resolves, and that a name which does **not** resolve is
+refused rather than silently answered. `LoadKeyboardLayoutW` is the reason it
+exists: `en-US`, `zz` and `04190419` all return the *system default* handle on
+this machine rather than failing, so a check for a non-zero handle would have
+sent the user to the wrong layout over a typo, and `GetLastError()` reads 1400
+for a valid `00000409` and 0 for a valid `00000419`, so it is no signal either.
+The low 16 bits of the returned handle are the only part Windows got right in
+every silent case, and that is the rule. It also pins the wiring order — the
+layout is borrowed before the start is queued and handed back after the tail is
+typed — and that `00000420` loads even though it is not installed, which is why
+the probe does not use `GetKeyboardLayoutList` as the test. Run it after any
+change to `LayoutGuard`, to the layout setting, or to the engage and release
+points in `run.py`.
+
+`tools\release_probe.py` is the thirteenth: it covers the one check that stands
+between a public archive and this machine's own choices. The release now ships a
+pristine `settings.json` so the keys are discoverable, which means
+`package_release.py` cannot refuse that file by name any more and compares bytes
+instead — so the probe pins that the generated file really is the defaults
+(hotkeys, theme, the automatic device, and `dictate_layout` empty even when this
+machine has one set), that the generator is not reading the checkout's own file
+on its way to them, and that the audit still refuses this machine's settings, a
+single renamed key, and a word list lying beside it. A leak here would ship the
+hotkeys actually in use and the chosen microphone into a public release, and
+nothing downstream would notice, because the archive would still be a working
+WinVosk. Run it after any change to `package_release.py` or to the setting keys.
+
 ## Invariants worth keeping
 
 - **`config` and `settings` never import `theme`.** `theme` imports `tkinter` at
@@ -347,11 +386,33 @@ tab selection in `panel.py`.
   not always available: the switch is not written to disk unless it is closed
   cleanly. So `settings.dictate_layout` names a layout the foreground window is
   lent for the length of a recording, and the one that was there before is read
-  from the target thread and posted back to the same window. **Engage and
-  release it from `_on_state`, which brackets every way a recording can end** —
-  key up, a second press in toggle mode, the session ceiling — and release once
-  more on the way out, because a layout left in English is a user's next
-  morning. Empty by default: never touch a layout nobody asked to change.
+  from the target thread and posted back to the same window.
+  **Borrow it in `_hotkey_pressed`, before the start is queued, and hand it back
+  in `_on_stop` after the tail has been typed.** Not on `recording=True` from
+  the recogniser: that event arrives *after* the microphone is already open, so
+  the first fragment of the sentence would be typed under the wrong layout, and
+  the stream would be opened under the one the switcher is watching. Release
+  covers every way a recording can end — key up, a second press in toggle mode,
+  the session ceiling — and runs once more on the way out, because a layout left
+  in English is a user's next morning.
+  `config.DICTATE_LAYOUT_DEFAULT` is `00000409` and the feature is **on by
+  default**: the damage it prevents was not hypothetical, and a switch that ships
+  off is a switch nobody finds. An empty string in `settings.json` turns it off,
+  which is the one thing to try on a machine that has no English layout.
+  **The guard is handed the accessor, never its result.** `LayoutGuard` reads the
+  setting when a recording starts rather than when the process did, like every
+  other setting here, so it stores the function and calls it. Given the *value*,
+  every use raised `TypeError: 'str' object is not callable`, `is_armed` caught it
+  and answered `False`, and the guard was permanently disarmed **whatever
+  `settings.json` said** — three reports of "it does not switch" were all this
+  one line. `tools\layout_probe.py` pins the construction for that reason.
+  **Never `PostMessage` the request.** It returns only whether the message
+  reached the queue, and a message in the queue of a window that never pumps one
+  looks exactly like one that was acted on. `SendMessageTimeout` with
+  `SMTO_ABORTIFHUNG` returns the answer, and `LAYOUT_SETTLE` then only waits for
+  the shell's repaint — which is why it is 0.15 s and not the 0.4 s the posted
+  version needed, a quarter second that used to be lost to the microphone
+  because the borrow happens before the stream opens.
 - **The hotkey records while it is held by default, and toggles only when asked.**
   `HotkeyListener` takes both `on_press` and `on_release`; the main key must be
   blocked from keydown until its keyup or key repeat turns one hold into a stream

@@ -72,7 +72,13 @@ class App:
         self._recording = False
         self._closing = False
         self._session = Session()
-        self._layout = keystrokes.LayoutGuard(settings.dictate_layout())
+        # The function, not its result: the guard reads the setting when a
+        # recording starts rather than when the process did, like every other
+        # setting in this application. Handed the *value* instead, it would hold
+        # a string where it expects something to call, `is_armed` would raise
+        # `TypeError: 'str' object is not callable`, and the guard would be
+        # permanently disarmed no matter what `settings.json` said.
+        self._layout = keystrokes.LayoutGuard(settings.dictate_layout)
 
         model_path = config.resolve_model()
         self._engine = DictationEngine(
@@ -456,10 +462,22 @@ class App:
         the state at that moment. Deciding it in the hook callback would read a
         `_recording` that has not caught up with the first press yet, so a quick
         second press could be taken for another start.
+
+        The layout is borrowed here rather than when the engine reports that it
+        is listening. That event comes back from the recogniser thread *after* the
+        microphone has been opened, so the first fragment could be typed before
+        the layout changed — the one fragment this whole mechanism exists to
+        protect. The microphone must not open under the layout it was going to
+        be fought over in either, so the switch comes first.
         """
         if settings.toggle_recording():
-            self._commands.put("stop_recording" if self._recording else "press")
+            if not self._recording:
+                self._layout.engage()
+                self._commands.put("press")
+            else:
+                self._commands.put("stop_recording")
             return
+        self._layout.engage()
         self._commands.put("press")
 
     def _set_toggle(self, enabled: bool) -> None:
@@ -521,11 +539,6 @@ class App:
             live = settings.live_typing()
             self._words = vocabulary.own_words(config.PHRASES_FILE)
             self._panel.set_word_count(len(self._words))
-            # Before the first character can arrive, and only here: `_on_state`
-            # brackets every way a recording can end - the key coming up, a
-            # second press in toggle mode, and the session ceiling - so this is
-            # the one place the layout has to be handed back.
-            self._layout.engage()
             self._session.begin(live)
             if live:
                 self._panel.set_status(text.t("recording_live"))

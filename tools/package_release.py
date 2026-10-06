@@ -6,7 +6,9 @@ anybody else, and the log directory fills up with whatever was dictated. So this
 step takes `dist\\WinVosk\\`, copies it aside, and takes the personal parts out:
 
 - `phrases.txt` is removed and `phrases.example.txt` is shipped instead,
-- `logs\\` is emptied, and any `settings.json` left in the folder is dropped,
+- `logs\\` is emptied, and the build machine's own `settings.json` is dropped and
+  replaced with one generated from the defaults, so the keys are discoverable
+  without shipping anybody's choices,
 - the license texts are added, because the bundle ships Apache-2.0 code, the GCC
   runtime and the PyInstaller bootloader,
 - a `README.txt` says what to do after unpacking.
@@ -23,6 +25,7 @@ quietly. Run it after `build_exe.py`:
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import sys
 import zipfile
@@ -62,9 +65,18 @@ README_TEXT = """WinVosk {version} — offline dictation and voice-to-text for W
 5. Your own words go in phrases.txt — copy phrases.example.txt and fill it in.
    The file is not shipped, because it is yours.
 
+6. settings.json is here, holding every default. Nothing in it needs changing:
+   the application reads it, the panel writes to it. It is in the archive so the
+   keys can be seen rather than guessed at. Worth knowing about one of them —
+   "dictate_layout" lends the window you are typing in an English keyboard
+   layout for the length of a recording and puts yours back afterwards, which
+   stops layout switchers from rewriting the words as they arrive. It ships
+   empty, so nothing happens until you put a language id in it, for example
+   "00000409" for English or "00000419" for Russian.
+
 Recognition is local. The application opens no network connection at all: no
-account, no update check, no analytics. The only files it writes are logs\\,
-settings.json and phrases.txt on your own disk.
+account, no update check, no analytics. The only files it writes are logs\\ and
+phrases.txt on your own disk, and settings.json when you change something.
 
 Full guide and screenshots: the project page. Licenses for everything in this
 folder are in licenses\\, and NOTICE says what is whose.
@@ -75,6 +87,42 @@ def _version() -> str:
     from winvosk import config
 
     return config.VERSION
+
+
+def settings_bytes() -> bytes:
+    """The `settings.json` a machine that has none would run on, as shipped bytes.
+
+    Read through the application's own accessors rather than written out as a
+    literal here. The defaults live in `config` and inside those accessors, so a
+    second copy in this file would drift the first time a default changed and
+    nobody would notice until a release shipped the old value.
+
+    The path is pointed at a file that does not exist while they are read, so the
+    build machine's own `settings.json` — its hotkeys, its theme, its recording
+    device, its layout — cannot leak into somebody else's release. That is the
+    whole reason this is generated rather than copied out of `dist\\WinVosk\\`.
+    """
+    from winvosk import settings
+
+    absent = ROOT / "dist" / "_not_a_real_settings_file.json"
+    real, settings.SETTINGS_FILE = settings.SETTINGS_FILE, absent
+    try:
+        data = {
+            settings.HOTKEY_KEY: settings.hotkeys(),
+            settings.LIVE_TYPE_KEY: settings.live_typing(),
+            settings.CLIPBOARD_KEY: settings.copy_to_clipboard(),
+            settings.CORRECT_KEY: settings.correct_words(),
+            settings.TOGGLE_KEY: settings.toggle_recording(),
+            settings.LOG_KEY: settings.logging_enabled(),
+            settings.HISTORY_KEY: settings.history_enabled(),
+            settings.LANGUAGE_KEY: settings.language(),
+            settings.THEME_KEY: settings.theme_name(),
+            settings.DEVICE_KEY: settings.input_device(),
+            settings.LAYOUT_KEY: settings.dictate_layout(),
+        }
+    finally:
+        settings.SETTINGS_FILE = real
+    return (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
 def _clear(folder: Path) -> None:
@@ -138,6 +186,15 @@ def stage(version: str) -> Path:
     if example.exists():
         shutil.copy2(example, staged / "phrases.example.txt")
 
+    # A pristine settings file, generated rather than copied: it makes every key
+    # discoverable, which is the only reason a first run has to open the panel to
+    # find out what can be changed. `dictate_layout` is in it and empty, so the
+    # keyboard is left alone until somebody fills it in.
+    raw = settings_bytes()
+    (staged / "settings.json").write_bytes(raw)
+    print(f"  settings    : settings.json written, {len(raw)} bytes, "
+          f"{len(json.loads(raw))} keys, defaults only")
+
     underline = "=" * len(f"WinVosk {version} — offline dictation and voice-to-text for Windows")
     (staged / "README.txt").write_text(
         README_TEXT.format(version=version, underline=underline), encoding="utf-8"
@@ -146,13 +203,21 @@ def stage(version: str) -> Path:
 
 
 def audit(staged: Path) -> None:
-    """Refuse to ship a word list or a log."""
+    """Refuse to ship a word list, a log, or somebody else's settings."""
+    expected = settings_bytes()
     problems = []
     for path in staged.rglob("*"):
         if path.is_dir():
             continue
         name = path.name.lower()
-        if name in PERSONAL_NAMES or name.startswith("app.log"):
+        if name == "settings.json":
+            # Legitimate now, because `stage` writes one. What must not ship is
+            # a file that is not that one: the build machine's own settings are
+            # personal — its hotkeys, its theme, its recording device — and a name
+            # check cannot tell the two apart, so the bytes are compared.
+            if path.read_bytes() != expected:
+                problems.append(path.relative_to(staged))
+        elif name in PERSONAL_NAMES or name.startswith("app.log"):
             problems.append(path.relative_to(staged))
         elif path.suffix in {".txt", ".log"} and path.parent.name == "logs":
             problems.append(path.relative_to(staged))
