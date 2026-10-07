@@ -25,7 +25,7 @@ quietly. Run it after `build_exe.py`:
 from __future__ import annotations
 
 import hashlib
-import json
+
 import shutil
 import sys
 import zipfile
@@ -38,6 +38,9 @@ BUILT = ROOT / "dist" / "WinVosk"
 
 # Anything that is the user's and not the project's. `phrases.txt` is the word
 # list, `logs\` is the dictated history, `settings.json` is this machine's hotkey.
+# The settings file is not only dropped from the archive, it is *generated* by the
+# application on the first run — see `settings.ensure_file` — so there is nothing
+# to keep in step here and nothing in it for a user to decide what to do with.
 PERSONAL_NAMES = ("phrases.txt", "settings.json", "settings.json.tmp")
 PERSONAL_DIRS = ("logs",)
 
@@ -65,14 +68,22 @@ README_TEXT = """WinVosk {version} — offline dictation and voice-to-text for W
 5. Your own words go in phrases.txt — copy phrases.example.txt and fill it in.
    The file is not shipped, because it is yours.
 
-6. settings.json is here, holding every default. Nothing in it needs changing:
-   the application reads it, the panel writes to it. It is in the archive so the
-   keys can be seen rather than guessed at. Worth knowing about one of them —
-   "dictate_layout" lends the window you are typing in an English keyboard
-   layout for the length of a recording and puts yours back afterwards, which
-   stops layout switchers from rewriting the words as they arrive. It ships
-   empty, so nothing happens until you put a language id in it, for example
-   "00000409" for English or "00000419" for Russian.
+6. There is no settings.json in the archive, and that is deliberate: the first
+   run writes one next to this exe with every setting in it and its default, and
+   the panel writes to it from then on. Nothing in it needs changing — it is a
+   list of what *can* be changed. Two keys are worth knowing about, because they
+   are about other programs rather than about this one.
+
+   "dictate_layout" lends the window you are typing in an English keyboard layout
+   for the length of a recording and puts yours back afterwards, which stops
+   layout switchers from rewriting the words as they arrive. It is written as
+   "00000409", English, and an empty string is how you switch it off.
+
+   "switcher_key" is a combination, "ctrl+shift+f10" by way of example, pressed
+   once before a recording and once after it to ask a keyboard layout switcher
+   such as Punto Switcher to stop rewriting your words. It is written empty,
+   because there is no right default — it has to be the combination your own
+   switcher answers — so no keys are pressed until you name one.
 
 Recognition is local. The application opens no network connection at all: no
 account, no update check, no analytics. The only files it writes are logs\\ and
@@ -87,42 +98,6 @@ def _version() -> str:
     from winvosk import config
 
     return config.VERSION
-
-
-def settings_bytes() -> bytes:
-    """The `settings.json` a machine that has none would run on, as shipped bytes.
-
-    Read through the application's own accessors rather than written out as a
-    literal here. The defaults live in `config` and inside those accessors, so a
-    second copy in this file would drift the first time a default changed and
-    nobody would notice until a release shipped the old value.
-
-    The path is pointed at a file that does not exist while they are read, so the
-    build machine's own `settings.json` — its hotkeys, its theme, its recording
-    device, its layout — cannot leak into somebody else's release. That is the
-    whole reason this is generated rather than copied out of `dist\\WinVosk\\`.
-    """
-    from winvosk import settings
-
-    absent = ROOT / "dist" / "_not_a_real_settings_file.json"
-    real, settings.SETTINGS_FILE = settings.SETTINGS_FILE, absent
-    try:
-        data = {
-            settings.HOTKEY_KEY: settings.hotkeys(),
-            settings.LIVE_TYPE_KEY: settings.live_typing(),
-            settings.CLIPBOARD_KEY: settings.copy_to_clipboard(),
-            settings.CORRECT_KEY: settings.correct_words(),
-            settings.TOGGLE_KEY: settings.toggle_recording(),
-            settings.LOG_KEY: settings.logging_enabled(),
-            settings.HISTORY_KEY: settings.history_enabled(),
-            settings.LANGUAGE_KEY: settings.language(),
-            settings.THEME_KEY: settings.theme_name(),
-            settings.DEVICE_KEY: settings.input_device(),
-            settings.LAYOUT_KEY: settings.dictate_layout(),
-        }
-    finally:
-        settings.SETTINGS_FILE = real
-    return (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
 def _clear(folder: Path) -> None:
@@ -186,14 +161,13 @@ def stage(version: str) -> Path:
     if example.exists():
         shutil.copy2(example, staged / "phrases.example.txt")
 
-    # A pristine settings file, generated rather than copied: it makes every key
-    # discoverable, which is the only reason a first run has to open the panel to
-    # find out what can be changed. `dictate_layout` is in it and empty, so the
-    # keyboard is left alone until somebody fills it in.
-    raw = settings_bytes()
-    (staged / "settings.json").write_bytes(raw)
-    print(f"  settings    : settings.json written, {len(raw)} bytes, "
-          f"{len(json.loads(raw))} keys, defaults only")
+    # No settings file here on purpose. It used to be generated into the archive so
+    # the keys were discoverable without opening the panel, and that meant two
+    # copies of the schema to keep in step — this file and `settings.defaults` —
+    # and a `settings.json` for a user to wonder about before they had changed
+    # anything. The application writes it on its first run now, next to the exe,
+    # from `settings.defaults()`, which is the only place the list exists.
+    print("  settings    : not shipped; the first run writes one next to the exe")
 
     underline = "=" * len(f"WinVosk {version} — offline dictation and voice-to-text for Windows")
     (staged / "README.txt").write_text(
@@ -203,21 +177,22 @@ def stage(version: str) -> Path:
 
 
 def audit(staged: Path) -> None:
-    """Refuse to ship a word list, a log, or somebody else's settings."""
-    expected = settings_bytes()
+    """Refuse to ship a word list, a log, or somebody else's settings.
+
+    A name check is enough again, and it is enough *because* the release no longer
+    writes a `settings.json` at all: the application generates one on its first
+    run, so there is no legitimate copy of that name in an archive and any file
+    found here is this machine's — its hotkeys, its theme, its recording device.
+    When the archive did ship a pristine one, a name check could not tell the two
+    apart and the bytes had to be compared, which was the whole reason this
+    function grew a branch.
+    """
     problems = []
     for path in staged.rglob("*"):
         if path.is_dir():
             continue
         name = path.name.lower()
-        if name == "settings.json":
-            # Legitimate now, because `stage` writes one. What must not ship is
-            # a file that is not that one: the build machine's own settings are
-            # personal — its hotkeys, its theme, its recording device — and a name
-            # check cannot tell the two apart, so the bytes are compared.
-            if path.read_bytes() != expected:
-                problems.append(path.relative_to(staged))
-        elif name in PERSONAL_NAMES or name.startswith("app.log"):
+        if name in PERSONAL_NAMES or name.startswith("app.log"):
             problems.append(path.relative_to(staged))
         elif path.suffix in {".txt", ".log"} and path.parent.name == "logs":
             problems.append(path.relative_to(staged))

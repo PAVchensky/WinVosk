@@ -2,13 +2,15 @@
 
 The file is per-machine state, so it is ignored by git and deleted freely: a
 missing or broken file only costs the defaults, never a working application.
-The schema is ten keys: the hotkey list, the interface language, the interface
-theme, the recording device and six on/off switches — "Печатать в активное окно",
+The schema is twelve keys: the hotkey list, the interface language, the interface
+theme, the recording device, six on/off switches — "Печатать в активное окно",
 "Сразу в буфер", "Исправлять свои слова", "Переключать запись", "Писать журнал в
-файл" and "Сохранять историю". Unknown keys are ignored on read so a file written
-by a later version still loads, and a value of the wrong shape or one `hotkey.parse`
-refuses is replaced by the defaults rather than handed on to the listener, which
-would raise and keep the app from starting at all.
+файл" and "Сохранять историю" — and the two keys a keyboard needs: the layout
+lends to the window being typed in, `dictate_layout`, and the combination pressed
+to quiet a layout switcher, `switcher_key`. Unknown keys are ignored on read so a
+file written by a later version still loads, and a value of the wrong shape or one
+`hotkey.parse` refuses is replaced by the defaults rather than handed on to the
+listener, which would raise and keep the app from starting at all.
 
 Nothing is cached: the effective value is read from the file every time, so the
 in-memory state and the disk cannot drift apart even if a save fails.
@@ -39,6 +41,7 @@ LANGUAGE_KEY = "language"
 THEME_KEY = "theme"
 DEVICE_KEY = "input_device"
 LAYOUT_KEY = "dictate_layout"
+SWITCHER_KEY = "switcher_key"
 
 
 def load() -> dict[str, Any]:
@@ -176,6 +179,74 @@ def store_flag(key: str, value: bool) -> bool:
     return save(data)
 
 
+def defaults() -> dict[str, Any]:
+    """Every key, with the value a machine that has never chosen anything gets.
+
+    Two of them are empty rather than filled, and both because the value is a fact
+    about *this* machine that the application cannot know:
+
+    - `input_device` is `null`, which is an answer here: the system default. A
+      name would be a guess about which microphone this computer has.
+    - `switcher_key` is `""`, which is the documented way to switch that feature
+      off. There is no sensible default combination — the right one is whatever
+      the user's own layout switcher is bound to, and naming one would press it
+      at a program that never asked.
+
+    Everything else is the shipped default and is written out rather than left
+    absent, because a key that is missing and a key that is set to its default
+    read the same to the application but not to a person opening the file: this
+    is the list of what can be changed, in one place, with nothing hidden.
+    """
+    return {
+        HOTKEY_KEY: list(config.HOTKEYS),
+        LIVE_TYPE_KEY: config.LIVE_TYPE_DEFAULT,
+        CLIPBOARD_KEY: config.CLIPBOARD_DEFAULT,
+        CORRECT_KEY: config.CORRECT_WORDS_DEFAULT,
+        TOGGLE_KEY: config.TOGGLE_DEFAULT,
+        LOG_KEY: config.LOG_WRITE_DEFAULT,
+        HISTORY_KEY: config.HISTORY_WRITE_DEFAULT,
+        LANGUAGE_KEY: config.LANGUAGE_DEFAULT,
+        THEME_KEY: config.THEME_DEFAULT,
+        DEVICE_KEY: None,
+        LAYOUT_KEY: config.DICTATE_LAYOUT_DEFAULT,
+        SWITCHER_KEY: config.SWITCHER_KEY_DEFAULT,
+    }
+
+
+def ensure_file() -> bool:
+    """Write the defaults out on the first run. True when a file was created.
+
+    Only ever a creation: an existing file is the user's, whatever is in it, and
+    is never rewritten here. A file that exists but cannot be parsed is left
+    alone too — it was already reported by `load`, and overwriting it would
+    destroy whatever the hand edit was reaching for.
+
+    Nothing here reads `load()`, which is the whole care in this function: a
+    generator that asked the settings module what it currently holds would read
+    the file on disk, so the file that gets created would be seeded from whatever
+    was already there. Every value in it comes from `config` instead.
+    """
+    if SETTINGS_FILE.exists():
+        return False
+    if not save(defaults()):
+        return False
+    log.info("first run: %s written with every setting and its default",
+             SETTINGS_FILE)
+    return True
+
+
+def defaults_text() -> str:
+    """The first-run file as text, which is what `save` writes and nothing else.
+
+    Split out so the byte comparison in `tools\\release_probe.py` is against the
+    same string rather than a second `json.dumps` written next to it: `save` opens
+    the file in text mode, so on Windows the line endings come out CRLF, and a
+    probe that built its expectation with a bare `json.dumps` would be comparing
+    two encodings of the same content and failing on every run.
+    """
+    return json.dumps(defaults(), ensure_ascii=False, indent=2) + "\n"
+
+
 def live_typing() -> bool:
     """True when the recognised words are typed into the foreground window."""
     return flag(LIVE_TYPE_KEY, config.LIVE_TYPE_DEFAULT)
@@ -263,6 +334,33 @@ def dictate_layout() -> str:
 
 def store_history_enabled(value: bool) -> bool:
     return store_flag(HISTORY_KEY, value)
+
+
+def switcher_key() -> str:
+    r"""The combination pressed to quiet a keyboard layout switcher while dictating.
+
+    `config.SWITCHER_KEY_DEFAULT` unless the file says otherwise, and an empty
+    string means nothing is ever pressed — the shipped default, because on a
+    machine with no switcher there is nothing to ask. `ctrl+shift+f10` is the
+    combination Punto Switcher can be told to bind to its own "auto-replace off"
+    switch; the spelling is the one `hotkey.parse` takes.
+
+    Read from the file on every use, like every other setting here, so editing it
+    takes effect without a restart. Whether the value is a combination this
+    application can press is settled by the guard that presses it, once per press,
+    where there is a log line to be printed into — the same division of labour as
+    `dictate_layout` and `LayoutGuard`.
+    """
+    stored = load().get(SWITCHER_KEY)
+    if stored is None:
+        return config.SWITCHER_KEY_DEFAULT
+    if isinstance(stored, str):
+        return stored.strip()
+    log.warning(
+        "%s: %r must be a combination such as \"ctrl+shift+f10\" or an empty "
+        "string, using %r", SETTINGS_FILE, stored, config.SWITCHER_KEY_DEFAULT,
+    )
+    return config.SWITCHER_KEY_DEFAULT
 
 
 def language() -> str:

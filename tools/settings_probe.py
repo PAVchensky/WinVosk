@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(message)s")
 
-from winvosk import config, hotkey, settings, text
+from winvosk import config, hotkey, keystrokes, settings, text
 
 VK_ESCAPE = 0x1B
 VK_F5 = 0x74
@@ -554,11 +554,13 @@ def case_toggle_mode(results: list[bool]) -> None:
             app = run.App.__new__(run.App)
             app._commands = queue.Queue()
             app._recording = False
-            # `_hotkey_pressed` borrows the keyboard layout before it puts the
-            # start on the queue, so the guard is part of what a press has to
-            # have. Disarmed here, which is the empty default: a temporary
-            # settings file names no layout, so nothing is ever touched.
+            # `_hotkey_pressed` quiets the layout switcher and borrows the
+            # keyboard layout before it puts the start on the queue, so both
+            # guards are part of what a press has to have. Disarmed here, which
+            # is the empty default in each case: a temporary settings file names
+            # no layout and no switcher key, so nothing is ever touched.
             app._layout = run.keystrokes.LayoutGuard(lambda: "")
+            app._switcher = run.keystrokes.SwitcherGuard(lambda: "")
             seen: list[str] = []
             for _ in range(presses):
                 app._handle_command("hotkey_press")
@@ -759,6 +761,235 @@ def case_capture_is_released(results: list[bool]) -> None:
     results.append(not listener.is_capturing)
 
 
+def case_first_run(work: Path, results: list[bool]) -> None:
+    """The settings file is created by the application, and only once.
+
+    `tools\\release_probe.py` covers the file as the *release* sees it; this is the
+    other half, at the point where it matters to a user: `App.__init__` calls
+    `ensure_file`, and every setting in the file it writes has to read back as the
+    default it was written as. A key whose accessor disagrees with the value
+    written beside it is a file that lies about itself on the first run, which is
+    the one time anybody is likely to open it and believe it.
+    """
+    print("\ncase 14: the first run creates every key, and reads back its own value",
+          flush=True)
+    original = settings.SETTINGS_FILE
+    target = work / "first_run.json"
+    settings.SETTINGS_FILE = target
+    try:
+        made = settings.ensure_file()
+        check_ok = made and target.exists()
+        print(f"  created: {check_ok}", flush=True)
+        results.append(check_ok)
+        data = settings.load()
+        print(f"  {len(data)} key(s): {sorted(data)}", flush=True)
+        results.append(len(data) == 12)
+        # Every key reads back as itself. This is the round trip a real first run
+        # performs, and the one the panel would then write over.
+        for key, value in settings.defaults().items():
+            if key == settings.HOTKEY_KEY:
+                got = settings.hotkeys()
+            elif key == settings.LIVE_TYPE_KEY:
+                got = settings.live_typing()
+            elif key == settings.CLIPBOARD_KEY:
+                got = settings.copy_to_clipboard()
+            elif key == settings.CORRECT_KEY:
+                got = settings.correct_words()
+            elif key == settings.TOGGLE_KEY:
+                got = settings.toggle_recording()
+            elif key == settings.LOG_KEY:
+                got = settings.logging_enabled()
+            elif key == settings.HISTORY_KEY:
+                got = settings.history_enabled()
+            elif key == settings.LANGUAGE_KEY:
+                got = settings.language()
+            elif key == settings.THEME_KEY:
+                got = settings.theme_name()
+            elif key == settings.DEVICE_KEY:
+                got = settings.input_device()
+            elif key == settings.LAYOUT_KEY:
+                got = settings.dictate_layout()
+            else:
+                got = settings.switcher_key()
+            ok = got == value
+            print(f"  {key:22s} = {got!r:24s} {ok}", flush=True)
+            results.append(ok)
+        # The two keys that are facts about this machine are empty rather than
+        # guessed: a microphone name and a switcher combination are not defaults.
+        print(f"  the device is not guessed    : "
+              f"{settings.input_device() is None}", flush=True)
+        print(f"  the switcher key is not sent : "
+              f"{settings.switcher_key() == ''}", flush=True)
+        results.append(settings.input_device() is None
+                       and settings.switcher_key() == "")
+        check_again = settings.ensure_file()
+        print(f"  a second run writes nothing  : {check_again is False}", flush=True)
+        results.append(check_again is False)
+    finally:
+        settings.SETTINGS_FILE = original
+
+
+def case_switcher_key(work: Path, results: list[bool]) -> None:
+    """The combination pressed to quiet a layout switcher, end to end.
+
+    Nothing is typed into anything here. The keys themselves would go onto a real
+    keyboard, so `keystrokes._deliver` is replaced with a recorder and what the
+    guard builds is inspected: the right codes, in the right order, six events for
+    the combination carrying `hotkey.SYNTHETIC_TAG` so the application's own hook
+    leaves them out of its matching, and two for the `Escape` that follows them
+    untagged, because it has to reach the window the combination was aimed past.
+
+    The hook is then driven with fabricated structs the same way case 9 does, and
+    the part that matters is that it returns **0** — it must pass every event on to
+    the hook behind it. Swallowing them is what starved the switcher, and that is
+    measured on this machine rather than assumed.
+    """
+    print("\ncase 13: the switcher key is read, pressed once, and passed on whole",
+          flush=True)
+    original = settings.SETTINGS_FILE
+    target = work / "settings.json"
+    settings.SETTINGS_FILE = target
+    try:
+        def read(payload: str | None, label: str, wanted: str) -> bool:
+            if payload is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.write_text(payload, encoding="utf-8")
+            got = settings.switcher_key()
+            ok = got == wanted
+            print(f"  {label:34s} -> {got!r:24s} {ok}", flush=True)
+            return ok
+
+        default = config.SWITCHER_KEY_DEFAULT
+        combo = "ctrl+shift+f10"
+        ok = read(None, "missing file", default)
+        ok = ok and read("{}", "a file without the key", default)
+        ok = ok and read(f'{{"switcher_key": "{combo}"}}', "a stored combination", combo)
+        ok = ok and read(f'{{"switcher_key": "  {combo}  "}}', "padded, as pasted",
+                         combo)
+        ok = ok and read('{"switcher_key": ""}', "an empty string, i.e. off", "")
+        ok = ok and read('{"switcher_key": 42}', "a number", default)
+        ok = ok and read('{"switcher_key": ["ctrl+f10"]}', "a list", default)
+        ok = ok and read('{"switcher_key": null}', "null", default)
+
+        # The order the keys go out in, and the refusal of anything that is not a
+        # combination: pressing `shift` alone would be a modifier stuck down.
+        print(f"  sequence({combo!r}) = "
+              f"{[hex(vk) for vk in hotkey.sequence(combo)]}", flush=True)
+        ok = ok and hotkey.sequence(combo) == [0x11, 0x10, 0x79]
+        ok = ok and hotkey.sequence("shift+ctrl+f10") == [0x11, 0x10, 0x79]
+        ok = ok and hotkey.sequence("  CTRL + Shift + F10 ") == [0x11, 0x10, 0x79]
+        refused = True
+        for spec in ("shift", "ctrl+нет", "f10"):
+            try:
+                hotkey.sequence(spec)
+                print(f"  sequence({spec!r}) was accepted", flush=True)
+                refused = False
+            except hotkey.HotkeyError as exc:
+                print(f"  sequence({spec!r}) refused: {exc}", flush=True)
+        ok = ok and refused
+        results.append(ok)
+
+        # What the guard actually sends, with `SendInput` replaced by a recorder.
+        # The settle is dropped as well: the point of these cases is the events and
+        # their order, and a tenth of a second twice is all it would buy.
+        sent: list[tuple[int, int, int]] = []
+        real_deliver = keystrokes._deliver
+        real_foreign = keystrokes.foreign_in_front
+        real_sleep = keystrokes.time.sleep
+        keystrokes._deliver = lambda events: sent.extend(
+            (int(e.ki.wVk), int(e.ki.dwFlags), int(e.ki.dwExtraInfo))
+            for e in events
+        )
+        keystrokes.time.sleep = lambda _seconds: None
+        try:
+            # Own window in front: nothing is pressed, because there is nothing to
+            # type at and a switcher does not need telling about nothing.
+            sent.clear()
+            own = keystrokes.SwitcherGuard(lambda: combo)
+            keystrokes.foreign_in_front = lambda: False
+            quiet = own.engage()
+            print(f"  our own window in front: engage={quiet}, "
+                  f"{len(sent)} event(s) sent", flush=True)
+            results.append(quiet is False and not sent)
+
+            keystrokes.foreign_in_front = lambda: True
+            guard = keystrokes.SwitcherGuard(lambda: combo)
+            armed = guard.is_armed
+            first = guard.engage()
+            second = guard.engage()
+            print(f"  armed={armed}, engage={first}, a second engage={second}, "
+                  f"{len(sent)} event(s)", flush=True)
+            results.append(armed and first and second is False)
+            # Six for the combination and two for the Escape that follows it, and
+            # the Escape is deliberately untagged: it has to reach the window the
+            # combination may have opened a menu in.
+            results.append(len(sent) == 8)
+            tag = hotkey.SYNTHETIC_TAG
+            want = [(0x11, 0, tag), (0x10, 0, tag),
+                    (0x79, 0, tag), (0x79, 0x0002, tag),
+                    (0x10, 0x0002, tag), (0x11, 0x0002, tag),
+                    (0x1B, 0, 0), (0x1B, 0x0002, 0)]
+            for got, expected in zip(sent, want):
+                print(f"    vk=0x{got[0]:02X} flags=0x{got[1]:02X} "
+                      f"extra=0x{got[2]:08X} {got == expected}", flush=True)
+            results.append(sent == want)
+
+            # Nothing is owed a second press before the first one happened, and
+            # the shutdown path's release must not press on its own.
+            idle = keystrokes.SwitcherGuard(lambda: "")
+            print(f"  the empty setting: armed={idle.is_armed}, engage={idle.engage()}, "
+                  f"release={idle.release()}", flush=True)
+            results.append(not idle.is_armed and idle.engage() is False
+                           and idle.release() is False)
+
+            released = guard.release()
+            print(f"  release={released}, {len(sent)} event(s) in total, "
+                  f"is_held={guard.is_held}", flush=True)
+            results.append(released and len(sent) == 16 and not guard.is_held)
+            again = guard.release()
+            print(f"  a second release={again} and still {len(sent)} event(s)",
+                  flush=True)
+            results.append(again is False and len(sent) == 16)
+        finally:
+            keystrokes._deliver = real_deliver
+            keystrokes.foreign_in_front = real_foreign
+            keystrokes.time.sleep = real_sleep
+
+        # The half that cannot be faked: the application's own hook has to pass
+        # every event of the burst on to the hook behind it, and it has to do it
+        # without matching anything. Swallowing them is what starved the switcher,
+        # so the return value is the load-bearing part of this case.
+        listener = hotkey.HotkeyListener(config.HOTKEYS, on_press=lambda: None,
+                                         on_release=lambda: None)
+
+        def feed(vk: int, message: int, extra: int = 0) -> int:
+            data = hotkey._KeyboardHookStruct()
+            data.vkCode = vk
+            data.dwExtraInfo = extra
+            return listener._on_event(hotkey.HC_ACTION, message, ctypes.addressof(data))
+
+        passed_on = all(
+            feed(vk, message, hotkey.SYNTHETIC_TAG) == 0
+            for vk in (0x11, 0x10, 0x79, 0x1B)
+            for message in (hotkey.WM_KEYDOWN, hotkey.WM_KEYUP)
+        )
+        held = not listener._pressed
+        print(f"  the hook passed all eight on: {passed_on}, "
+              f"nothing left held: {held}", flush=True)
+        results.append(passed_on and held)
+        # An untagged key from the same combination still behaves as it always
+        # did, or the tag would have broken the user's own hotkey.
+        plain = feed(0x41, hotkey.WM_KEYDOWN)
+        listener._pressed.clear()
+        print(f"  an untagged key still passes on: {plain}", flush=True)
+        results.append(plain == 0)
+        # And the user's own combination is unaffected by a burst of the same keys.
+        listener.stop()
+    finally:
+        settings.SETTINGS_FILE = original
+
+
 def main() -> None:
     results: list[bool] = []
     results.append(case_names())
@@ -772,6 +1003,8 @@ def main() -> None:
         case_input_device(work, results)
         case_log_verbose(work, results)
         case_partial_hotkeys(work, results)
+        case_switcher_key(work, results)
+        case_first_run(work, results)
     finally:
         settings.SETTINGS_FILE = config.BASE_DIR / "settings.json"
         shutil.rmtree(work, ignore_errors=True)

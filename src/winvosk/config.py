@@ -20,7 +20,7 @@ APP_NAME = "WinVosk"
 # without anyone reading a file. Three parts, MAJOR.MINOR.PATCH, all three
 # written: a two part number sorts wrongly in the release list and cannot carry
 # a patch at all.
-VERSION = "2.0.0"
+VERSION = "2.2.0"
 
 # True inside a PyInstaller bundle, where the modules sit in `_internal\` and
 # `__file__` no longer points at the folder the user keeps their files in.
@@ -94,6 +94,18 @@ HISTORY_RECENT = 10
 # was correct Cyrillic. Set it to "" to switch the feature off, which is the one
 # thing to try on a machine that has no English layout or no switcher at all.
 DICTATE_LAYOUT_DEFAULT = "00000409"
+# The combination pressed to ask a keyboard layout switcher to stop rewriting the
+# words for the length of a recording, pressed again once the tail has been typed.
+# `ctrl+shift+f10` is what Punto Switcher can be told to bind to its own "turn
+# auto-replace off" switch, which is why that one is the example rather than a
+# value here.
+#
+# Empty by default, and that is a decision rather than an omission: on a machine
+# with no switcher there is nobody to ask, and a combination injected for nothing
+# is a combination every application has to be trusted to ignore. Unlike the
+# layout above, this is not on by default — it is aimed at one program, and the
+# damage it prevents it prevents for only as long as the press is believed.
+SWITCHER_KEY_DEFAULT = ""
 # The interface language, `text.LANGUAGES`, English unless the user says otherwise.
 LANGUAGE_DEFAULT = text.DEFAULT_LANGUAGE
 # The interface themes and the one a machine with nothing stored gets. Plain

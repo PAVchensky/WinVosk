@@ -19,9 +19,11 @@ import ctypes.wintypes as wt
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import pyperclip
+
+from . import hotkey
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +33,14 @@ INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
 VK_BACK = 0x08
+VK_ESCAPE = 0x1B
+
+# How long to let a window react before the `Escape` that follows the switcher's
+# own combination. A context menu is created while the last key is being handled,
+# so an Escape sent in the same breath as the combination is dispatched first and
+# misses the menu entirely; this is a tenth of a second, once before the
+# microphone opens and once after the tail has been typed.
+SWITCHER_SETTLE = 0.1
 
 _PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
 
@@ -160,6 +170,44 @@ def press(vk: int, up: bool = False) -> None:
         release.ki = _KeyboardInput(vk, 0, KEYEVENTF_KEYUP, 0, 0)
         events.append(release)
     _deliver(events)
+
+
+def press_combination(keys: Sequence[int]) -> int:
+    r"""Press a combination as real keys, then let go of it in reverse.
+
+    Not `KEYEVENTF_UNICODE`, and not a copy of what the user pressed: the point
+    of these keys is a hook on the chain, and a hook reads virtual key codes and
+    the modifier state, never codepoints. Every event carries
+    `hotkey.SYNTHETIC_TAG` in `dwExtraInfo` so this application's own hook leaves
+    them out of its matching — see `HotkeyListener._on_event`.
+
+    They are **not** swallowed anywhere. Measured, and the opposite of what the
+    first version of this did: Windows calls the most recently installed low level
+    hook first, so this application's own hook is asked about these six events
+    before the switcher behind it is, and swallowing them kept them from the one
+    program they were meant for. The price of passing them on is that the window in
+    front sees a real combination, which in some applications is the context menu —
+    measured harmless in Explorer and Notepad, and the `Escape` below is the
+    insurance for the ones that could not be measured here.
+
+    Returns how many events were handed to `SendInput`.
+    """
+    events = [_key_event(vk, 0, hotkey.SYNTHETIC_TAG) for vk in keys]
+    events += [_key_event(vk, KEYEVENTF_KEYUP, hotkey.SYNTHETIC_TAG)
+               for vk in reversed(keys)]
+    _deliver(events)
+    # Long enough for a menu to exist, so the Escape has something to dismiss; and
+    # it is deliberately **not** tagged, because it has to reach that window.
+    time.sleep(SWITCHER_SETTLE)
+    _deliver([_key_event(VK_ESCAPE, 0, 0), _key_event(VK_ESCAPE, KEYEVENTF_KEYUP, 0)])
+    return len(events) + 2
+
+
+def _key_event(vk: int, flags: int, extra: int) -> _Input:
+    event = _Input()
+    event.type = INPUT_KEYBOARD
+    event.ki = _KeyboardInput(vk, 0, flags, 0, extra)
+    return event
 
 
 def type_text(text: str) -> None:
@@ -330,12 +378,25 @@ class LayoutGuard:
         return True
 
     def release(self) -> bool:
-        """Put the remembered layout back on the window it was taken from."""
+        r"""Put the remembered layout back on the window it was taken from.
+
+        `_request` answers with a bool, not a pair. Reading it as a pair is what
+        this line did until 2.1.0: `ok, _ = self._request(...)` raised
+        `TypeError: cannot unpack non-iterable bool object` on **every** recording
+        that had borrowed a layout, so the layout was never put back and every
+        step of `_on_stop` after it was skipped — no diary record, no final text
+        in the panel, no clipboard copy, and the switcher's own key never pressed
+        a second time, which would have left a layout switcher switched off for
+        the rest of the session. Nothing in the log said the recording had ended
+        badly except one `ERROR` line, and every check the probes ran missed it:
+        `tools\layout_probe.py` exercised the refusals and the message itself and
+        never this path with a layout actually borrowed.
+        """
         window, previous = self._window, self._previous
         self._window = self._previous = 0
         if not window or not previous:
             return False
-        ok, _ = self._request(window, previous)
+        ok = self._request(window, previous)
         time.sleep(LAYOUT_RESTORE_SETTLE)
         log.info("layout put back on 0x%08X%s", window, "" if ok else " (refused)")
         return ok
@@ -409,6 +470,103 @@ class LayoutGuard:
         return bool(user32.SendMessageTimeoutW(
             window, WM_INPUTLANGCHANGEREQUEST, 0, hkl,
             SMTO_ABORTIFHUNG, LAYOUT_ANSWER_MS, ctypes.byref(answer)))
+
+
+class SwitcherGuard:
+    """Ask a keyboard layout switcher to be quiet for the length of a recording.
+
+    `LayoutGuard` takes the trigger away by lending the target window a layout.
+    That is the right answer for a switcher that only acts on what the keyboard
+    layout *is*, and it was not enough on the machine this was found on: a
+    switcher with `AutoReplaceAlways` on kept rewriting the words, because it is
+    watching the key events themselves and was told nothing. So this guard asks
+    instead. The combination is pressed once before the microphone opens and once
+    more after the tail has been typed, and a switcher whose own hotkey is bound
+    to its off switch is then off for exactly the length of the sentence.
+
+    **The events are passed on rather than swallowed**, and that is the measured
+    part. Windows calls the most recently installed low level hook first, so this
+    application's hook is asked about these six events *before* the switcher
+    behind it: the first version swallowed them to keep them off the screen, and
+    the consequence was that they never reached the switcher at all — on a machine
+    where the switcher had been up for hours and WinVosk had been restarted, which
+    is the ordinary case. The price of letting them through is that the window in
+    front receives a real combination; `press_combination` measures what that costs
+    and follows it with an `Escape`.
+
+    What the switcher does with the keys is its own business and unobservable from
+    here. What *is* observable is that they went out, and every reason they might
+    not have is logged by name, exactly as `LayoutGuard.engage` logs its own.
+
+    `release` is idempotent and is called from the shutdown path as well as from
+    the stop path, because a switcher left off is a user's afternoon rather than a
+    log line — and it only presses anything when `engage` actually pressed it, so
+    a machine with no switcher never sees the keys at all.
+    """
+
+    def __init__(self, key: "Callable[[], str]") -> None:
+        # The function, for the reason `LayoutGuard` holds one: the setting is read
+        # when a recording starts rather than when the process did, like every
+        # other setting in this application. Handed the value instead, every use
+        # would raise `TypeError: 'str' object is not callable`.
+        self._read_key = key
+        self._keys: list[int] | None = None
+
+    @property
+    def is_armed(self) -> bool:
+        """Whether a combination is configured at all. Empty means never pressed."""
+        try:
+            return bool(str(self._read_key() or "").strip())
+        except Exception:
+            log.exception("the switcher key setting could not be read")
+            return False
+
+    @property
+    def is_held(self) -> bool:
+        """Whether a burst is currently owed a second press."""
+        return self._keys is not None
+
+    def engage(self) -> bool:
+        """Press the combination once, so the switcher stops rewriting the text.
+
+        False when nothing was pressed. Each of those is logged, for the reason
+        `LayoutGuard.engage` logs its own: silence here reads the same whether the
+        setting was never written, our own window was in front, the spec is not a
+        combination, or it worked and nothing has anything to say about it.
+        """
+        try:
+            spec = str(self._read_key() or "").strip()
+        except Exception:
+            log.exception("the switcher key setting could not be read")
+            return False
+        if not spec:
+            return False
+        if self._keys is not None:
+            return False
+        if not foreign_in_front():
+            log.info("switcher key %s not sent: no foreign window in front", spec)
+            return False
+        try:
+            keys = hotkey.sequence(spec)
+        except hotkey.HotkeyError as exc:
+            log.warning("switcher key %r is not a combination this app can press "
+                        "(%s), so the switcher is left as it is", spec, exc)
+            return False
+        sent = press_combination(keys)
+        self._keys = keys
+        log.info("switcher key %s pressed, %d event(s) passed on for the switcher "
+                 "behind our hook to answer, pressed again when the recording "
+                 "ends", spec, sent)
+        return True
+
+    def release(self) -> bool:
+        """Press it again, so the switcher goes back to what the user had."""
+        keys, self._keys = self._keys, None
+        if not keys:
+            return False
+        press_combination(keys)
+        log.info("switcher key pressed again, the switcher is back to its setting")
+        return True
 
 
 def copy_to_clipboard(text: str) -> bool:

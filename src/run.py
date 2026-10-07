@@ -72,6 +72,11 @@ class App:
         self._recording = False
         self._closing = False
         self._session = Session()
+        # The settings file is created here, on the first run, with every key
+        # visible — rather than shipped in the archive, where it would be one more
+        # thing to keep in step with the accessors and one more file for a user to
+        # decide what to do with. Never over an existing file: that one is theirs.
+        settings.ensure_file()
         # The function, not its result: the guard reads the setting when a
         # recording starts rather than when the process did, like every other
         # setting in this application. Handed the *value* instead, it would hold
@@ -79,6 +84,12 @@ class App:
         # `TypeError: 'str' object is not callable`, and the guard would be
         # permanently disarmed no matter what `settings.json` said.
         self._layout = keystrokes.LayoutGuard(settings.dictate_layout)
+        # The same reasoning, and the same key: the switcher's own combination is
+        # pressed before the microphone opens and pressed again when the tail has
+        # been typed, so a layout switcher with auto-replace on is quiet for the
+        # length of one sentence. Armed only by `settings.json`, because there is
+        # nobody to ask on a machine that has no switcher.
+        self._switcher = keystrokes.SwitcherGuard(settings.switcher_key)
 
         model_path = config.resolve_model()
         self._engine = DictationEngine(
@@ -469,14 +480,21 @@ class App:
         the layout changed — the one fragment this whole mechanism exists to
         protect. The microphone must not open under the layout it was going to
         be fought over in either, so the switch comes first.
+
+        The switcher's own combination goes before the layout, for the same
+        reason: a switcher that is being asked to stop rewriting the words should
+        have stopped before anything is typed at all, and a layout it has not
+        seen move is one less thing for it to act on.
         """
         if settings.toggle_recording():
             if not self._recording:
+                self._switcher.engage()
                 self._layout.engage()
                 self._commands.put("press")
             else:
                 self._commands.put("stop_recording")
             return
+        self._switcher.engage()
         self._layout.engage()
         self._commands.put("press")
 
@@ -578,7 +596,7 @@ class App:
             self._session.add_utterance(tail)
             if live:
                 self._session.typer.apply(tail, boundary=True)
-        self._layout.release()
+        self._release_keyboards()
         self._session.finish()
         text = self._session.total.strip()
         self._panel.set_text(text, "")
@@ -592,6 +610,27 @@ class App:
         if settings.copy_to_clipboard() and keystrokes.copy_to_clipboard(text):
             self._panel.append_note(
                 text.t("note_clipboard_also") if live else text.t("note_clipboard"))
+
+    def _release_keyboards(self) -> None:
+        r"""Hand the keyboard back: the borrowed layout, then the switcher.
+
+        Two guards, and neither may be able to strand the other. A layout left in
+        English is a user's next morning and a switcher left switched off is a
+        user's afternoon, but until 2.1.0 the first one could do exactly that to
+        the second: `LayoutGuard.release` raised, `_on_stop` aborted, and the
+        switcher was never pressed a second time, so a recording that muted it
+        left it muted. Each is released in its own `try`, the order is the one the
+        guard rails ask for — the layout first, the switcher last, so it stays
+        quiet over the layout going back — and a failure is logged by name rather
+        than propagated, because this runs at the end of a recording and the rest
+        of it is a diary record and a line of text the user is waiting for.
+        """
+        for what, release in (("layout", self._layout.release),
+                              ("switcher key", self._switcher.release)):
+            try:
+                release()
+            except Exception:
+                log.exception("could not hand the %s back", what)
 
     def _copy(self, text: str) -> None:
         if keystrokes.copy_to_clipboard(text.strip()):
@@ -785,8 +824,9 @@ class App:
         log.info("shutting down")
         # A layout left in English is a user's next morning rather than a log
         # line, so the shutdown path puts it back even though `_on_stop` already
-        # did. `release` is idempotent, so the ordinary case is one no-op.
-        self._layout.release()
+        # did. `release` is idempotent, so the ordinary case is one no-op per
+        # guard. The switcher is the same argument about a switcher left off.
+        self._release_keyboards()
         self._engine.close()
         self._stop_capture()
         if self._hotkey is not None:
@@ -1084,8 +1124,9 @@ def _diagnose() -> int:
         # Said here because it is a setting whose absence looks identical to a
         # setting that is not working: an empty value means the layout is never
         # touched, and a filled one is the only evidence the feature is armed.
-        f"dictation   : layout {settings.dictate_layout() or 'untouched'}"
-        f" while recording",
+        # The switcher key is the same, and the empty case is the shipped one.
+        f"dictation   : layout {settings.dictate_layout() or 'untouched'} and "
+        f"switcher key {settings.switcher_key() or 'not sent'} while recording",
         f"max session : {config.MAX_SESSION_SECONDS:.0f}s",
         f"records from: {device_name(index)} [{index}] "
         f"({chosen or 'the system default'}; "

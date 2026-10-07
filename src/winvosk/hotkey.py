@@ -84,6 +84,23 @@ _NAMED_BY_VK: dict[int, str] = {
 _KEY_DOWN = frozenset({WM_KEYDOWN, WM_SYSKEYDOWN})
 _KEY_UP = frozenset({WM_KEYUP, WM_SYSKEYUP})
 
+# Stamped into `dwExtraInfo` on every keystroke this application presses on
+# purpose, so its own hook can tell one from the user's. Windows offers nowhere
+# else to say so: injected keys are the same events as real ones, and nothing
+# about them says which process made them. No other program has any reason to
+# use this value, and a value that arrives from elsewhere is ignored — see
+# `HotkeyListener._on_event`.
+#
+# Tagged events are **passed on**, never swallowed. That is the second half of a
+# measurement, and the first half is what it contradicted: Windows calls the most
+# recently installed low level hook first, so this one is asked about the six
+# events before the switcher behind it is. Swallowing them here kept them off the
+# screen and off every other hook, which is exactly the switcher that was
+# supposed to answer them — on a machine where the switcher had been running for
+# hours and WinVosk was restarted, which is the usual case. See
+# `keystrokes.SwitcherGuard`.
+SYNTHETIC_TAG = 0x5736_4F53  # "WvOS", WinVosk
+
 
 class _KeyboardHookStruct(ctypes.Structure):
     _fields_ = [
@@ -149,6 +166,36 @@ def parse(spec: str) -> tuple[frozenset[int], list[frozenset[int]]]:
     return _keys_for(main), [_keys_for(part) for part in modifiers]
 
 
+def sequence(spec: str) -> list[int]:
+    r"""The virtual keys to *press* for a combination, modifiers first, main last.
+
+    `parse` answers "is this combination held", which is a question about sets:
+    order means nothing there, and the left and right variants of a modifier are
+    one key as far as matching goes. A combination that has to be typed is the
+    other question, so it gets its own answer rather than a set being pressed in
+    whatever order a set happens to iterate.
+
+    One key per modifier, taken in `_MODIFIER_ORDER` so the same spec always
+    produces the same sequence, and `min()` of the group so it is the generic
+    code — `VK_CONTROL`, `VK_MENU`, `VK_SHIFT`, `VK_LWIN` — rather than a side.
+    Windows takes a generic code from `SendInput` as readily as a side-specific
+    one, and a hook watching a combination sees the same thing either way.
+    """
+    parts = [part.strip().lower() for part in spec.split("+") if part.strip()]
+    if len(parts) < 2:
+        raise HotkeyError(f"need at least a modifier and a key, got {spec!r}")
+    *modifiers, main = parts
+    groups = [_keys_for(part) for part in modifiers]
+    keys = [
+        min(group)
+        for name in _MODIFIER_ORDER
+        for group in groups
+        if group & _MODIFIERS[name]
+    ]
+    keys.append(min(_keys_for(main)))
+    return keys
+
+
 def name_for(vk: int) -> str | None:
     """Reverse of `_keys_for`: a virtual key code as a name `parse` accepts.
 
@@ -180,6 +227,12 @@ class HotkeyListener:
 
     `start_capture` switches the same hook into recording a new combination,
     where every key is swallowed and no callback runs. See its docstring.
+
+    Keys stamped with `SYNTHETIC_TAG` are the ones this application pressed on
+    purpose for a hook behind this one (`keystrokes.SwitcherGuard`). They pass
+    through untouched — swallowing them is what starved the switcher — and they
+    never enter `_pressed`, so a combination named as `switcher_key` cannot start
+    a recording of its own.
     """
 
     def __init__(self, specs: str | Iterable[str], on_press, on_release=None) -> None:
@@ -307,6 +360,16 @@ class HotkeyListener:
         try:
             data = ctypes.cast(event_ptr, ctypes.POINTER(_KeyboardHookStruct)).contents
             vk = int(data.vkCode)
+            if int(data.dwExtraInfo or 0) == SYNTHETIC_TAG:
+                # A combination this application pressed on purpose for a hook
+                # behind this one, e.g. asking a layout switcher to stop rewriting
+                # what we type (`keystrokes.SwitcherGuard`). It is passed on and
+                # not swallowed: this hook is called first, so swallowing here is
+                # swallowing it for the switcher as well, and the measurement is
+                # that the switcher does answer it. What it must not do is match:
+                # the keydowns never enter `_pressed`, so the combination cannot
+                # start a recording, and the releases cannot end one.
+                return 0
             with self._lock:
                 if self._capture:
                     self._capture_key(vk, message)

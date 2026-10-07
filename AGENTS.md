@@ -234,8 +234,14 @@ worse than a noisy one.
 `tools\settings_probe.py` is a sixth check that is not part of the bar: it is
 headless, needs no GUI, microphone, model or real hook, and covers the
 `settings.json` keys — including the recording device, which is a name or an
-explicit `null` and refuses a number — the switches and the hotkey capture. Run it
-after any change to `settings.py`, `panel.py` or the settings part of `run.py`.
+explicit `null` and refuses a number — the switches, the hotkey capture, and case
+13, the switcher key: that it reads back trimmed, that `hotkey.sequence` gives the
+codes in a fixed order and refuses a spec that is not a combination, that the guard
+sends six events carrying `hotkey.SYNTHETIC_TAG` and only when it pressed one
+itself, and that the hook swallows every one of them without matching anything.
+`SendInput` is replaced by a recorder there, so the probe never puts a key on the
+real keyboard. Run it after any change to `settings.py`, `hotkey.py`,
+`keystrokes.py`, `panel.py` or the settings part of `run.py`.
 `tools\history_probe.py` is the tenth: same shape, and it covers the history
 reader and the switch that gates it — several days read back newest first, a
 hand edited line, a byte order mark, a write still in progress, the files in
@@ -276,33 +282,56 @@ to `overlay.py`, to the `chip_*` roles in `theme.py`, to `Scroller`, or to the
 tab selection in `panel.py`.
 
 `tools\layout_probe.py` is the twelfth: it needs no microphone and no foreground
-window, and it covers the half of the layout guard that a windowless shell can
-reach — that a name resolves, and that a name which does **not** resolve is
-refused rather than silently answered. `LoadKeyboardLayoutW` is the reason it
-exists: `en-US`, `zz` and `04190419` all return the *system default* handle on
-this machine rather than failing, so a check for a non-zero handle would have
-sent the user to the wrong layout over a typo, and `GetLastError()` reads 1400
-for a valid `00000409` and 0 for a valid `00000419`, so it is no signal either.
-The low 16 bits of the returned handle are the only part Windows got right in
-every silent case, and that is the rule. It also pins the wiring order — the
-layout is borrowed before the start is queued and handed back after the tail is
-typed — and that `00000420` loads even though it is not installed, which is why
-the probe does not use `GetKeyboardLayoutList` as the test. Run it after any
-change to `LayoutGuard`, to the layout setting, or to the engage and release
-points in `run.py`.
+window, and it covers the layout guard end to end — that a name resolves, that a
+name which does **not** resolve is refused rather than silently answered, the
+message itself against a thread of its own, and the guard's own round trip:
+`release` with a window and a remembered layout, which is where 2.0.0 shipped a
+`bool` unpacked as a pair and raised `TypeError` on **every** recording that had
+borrowed a layout. That last case exists because the refusals, the table and the
+message all passed while the happy path was never executed by anything, and the
+cost was a layout never put back, no diary record, no final text in the panel and
+the switcher's key never pressed a second time.
+`LoadKeyboardLayoutW` is the reason the table exists: `en-US`, `zz` and
+`04190419` all return the *system default* handle on this machine rather than
+failing, so a check for a non-zero handle would have sent the user to the wrong
+layout over a typo, and `GetLastError()` reads 1400 for a valid `00000409` and 0 for
+a valid `00000419`, so it is no signal either. The low 16 bits of the returned
+handle are the only part Windows got right in every silent case, and that is the
+rule. It also pins the wiring order — the layout is borrowed before the start is
+queued and handed back after the tail is typed, the switcher's key is engaged
+before the layout and released after it, and both are released from one place so
+neither can strand the other — and that `00000420` loads even though it is not
+installed, which is why the probe does not use `GetKeyboardLayoutList` as the test.
+Run it after any change to `LayoutGuard`, to the layout setting, or to the engage
+and release points in `run.py`.
+
+`tools\switcher_probe.py` is a **measurement, not a check**: what it measures is a
+third party's hook, so it presses keys and reports what it saw. It installs a real
+`WH_KEYBOARD_LL` — which makes it the newest, hence the first — sends the
+combination **without swallowing anything**, and records the return of
+`CallNextHookEx` for every event. A non-zero return means a hook behind it claimed
+the event, which is the order in which our own swallow starves the switcher; all
+zeros are not proof of indifference, since a hotkey handler may act and pass the
+event on. It refuses to report success when nothing was measured, because a locked
+session gives `SendInput` → 0 and an empty log. Run it with `cleanup.py` first and
+from a Notepad window, and treat its verdict as the decision on how `switcher_key`
+is delivered — not as a pass or a fail.
 
 `tools\release_probe.py` is the thirteenth: it covers the one check that stands
-between a public archive and this machine's own choices. The release now ships a
-pristine `settings.json` so the keys are discoverable, which means
-`package_release.py` cannot refuse that file by name any more and compares bytes
-instead — so the probe pins that the generated file really is the defaults
-(hotkeys, theme, the automatic device, and `dictate_layout` empty even when this
-machine has one set), that the generator is not reading the checkout's own file
-on its way to them, and that the audit still refuses this machine's settings, a
-single renamed key, and a word list lying beside it. A leak here would ship the
-hotkeys actually in use and the chosen microphone into a public release, and
-nothing downstream would notice, because the archive would still be a working
-WinVosk. Run it after any change to `package_release.py` or to the setting keys.
+between a public archive and this machine's own choices. **The archive ships no
+`settings.json` at all** — the application writes one on its first run, next to the
+exe, from `settings.defaults()` — so `package_release.py` is back to refusing that
+name outright, and the probe pins where the risk moved instead: that `defaults()`
+really is the defaults (hotkeys, theme, the automatic device, `dictate_layout` as
+shipped and `switcher_key` empty whatever this machine has) and every one of the
+twelve keys is written even when empty, that the generator is not reading the
+checkout's own file on its way to them, that `ensure_file()` creates the file once
+and never touches an existing one — a hand edited or a broken one included — and
+that the audit still refuses this machine's settings, a word list beside it and a
+diary. A leak here would ship the hotkeys actually in use and the chosen
+microphone into a public release, and nothing downstream would notice, because the
+archive would still be a working WinVosk. Run it after any change to
+`package_release.py`, to `ensure_file` or to the setting keys.
 
 ## Invariants worth keeping
 
@@ -413,6 +442,62 @@ WinVosk. Run it after any change to `package_release.py` or to the setting keys.
   the shell's repaint — which is why it is 0.15 s and not the 0.4 s the posted
   version needed, a quarter second that used to be lost to the microphone
   because the borrow happens before the stream opens.
+- **A layout switcher that watches the keys is not answered by a borrowed layout,
+  so `switcher_key` asks it outright — and the keys must stay off the screen.**
+  Lending a layout only takes the trigger away from a switcher that acts on what
+  the layout *is*. The one measured on this machine acts on the key events, so
+  `settings.switcher_key` names a combination to press before the microphone opens
+  and press again after the tail has been typed, aimed at whatever the user bound
+  in the switcher itself (`ctrl+shift+f10` on this machine's Punto Switcher). It
+  goes through `hotkey.sequence` rather than `hotkey.parse`: a combination that
+  has to be *pressed* needs one code per modifier in `_MODIFIER_ORDER` and the
+  main key last, and a set pressed in set order is not that.
+  **The events are passed on, never swallowed, and the swallow was the bug.**
+  Windows calls the most recently installed low level hook first, so on the ordinary
+  machine — the switcher up for hours, WinVosk restarted — our own hook is asked
+  about the six events *before* the switcher behind it. The first version returned 1
+  for them, so the combination was kept off the screen and off the one program it was
+  meant for; `app.log` said `switched key pressed` and the recording was rewritten
+  exactly as before. `hotkey._on_event` now returns 0 for a tagged event and never
+  lets one into `_pressed`, which is all the tag is for now: a combination named as
+  `switcher_key` must not start a recording of its own. `tools\settings_probe.py`
+  case 13 pins the return value, because that one `return` is the whole feature.
+  What the cost of passing them on is, was measured rather than argued: a delivered
+  `Ctrl+Shift+F10` opened no context menu in Explorer or Notepad, and
+  `press_combination` follows the combination with `Escape` after
+  `SWITCHER_SETTLE` for the applications that could not be measured here.
+  **It works, and what the user confirmed is that the switcher goes quiet.** With
+  `switcher_key` named, a recording comes out unmodified and the switcher is on
+  again after the tail — checked by hand on this machine, because nothing here can
+  read its state. The switcher does process injected *typing* (`ghbdtn` comes back
+  as «привет» into a native EDIT control), so its hook is on the chain; and it
+  processes injected *hotkeys* too, **as long as they reach it** — which is what the
+  swallow above was costing. **What was measured and does not work, so nobody tries
+  it again:** clearing `LLKHF_INJECTED` and `dwExtraInfo` in the `KBDLLHOOKSTRUCT`
+  from our hook before `CallNextHookEx` really does deliver clean flags and the
+  combination was discarded there as well: the mark lives in the input context, not
+  in the struct, so there is nothing to arrange about flags. It is not the answer
+  either — the combination works by arriving, not by looking less injected.
+  `tools\switcher_probe.py` is the measurement that made the swallow visible: it
+  installs a real `WH_KEYBOARD_LL`, sends **without swallowing anything**, and
+  records the return of `CallNextHookEx` per event, because the ordinary order
+  (our hook newest, so asked first) and the other one look identical from in here.
+  **It ships empty**, unlike `dictate_layout`. That one is on because the damage it
+  prevents was measured here; this one is aimed at a single program, and a
+  combination injected on every recording of a machine that has no switcher is a
+  combination every application has to be trusted to ignore.
+  **Release presses nothing it did not press**, and runs from `quit()` too: a
+  switcher left off is a user's afternoon. Engaged before the layout and released
+  after it, so it is quiet over the layout going back as well.
+  **Both guards are handed back from one place, each in a `try` of its own.**
+  Until 2.1.0 `LayoutGuard.release` raised on every borrowed recording and `_on_stop`
+  stopped there, so a switcher that had been muted at the start of the recording
+  was never told to come back — and the only trace was one `ERROR` line between two
+  perfectly normal ones. A layout left in English and a switcher left switched off
+  are the same class of damage, so neither may be able to strand the other, and
+  neither may be able to cost the user the diary record and the panel text that
+  come after them. `App._release_keyboards` is that place, and
+  `tools\layout_probe.py` executes the round trip that used to raise.
 - **The hotkey records while it is held by default, and toggles only when asked.**
   `HotkeyListener` takes both `on_press` and `on_release`; the main key must be
   blocked from keydown until its keyup or key repeat turns one hold into a stream

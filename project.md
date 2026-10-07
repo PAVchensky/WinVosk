@@ -46,7 +46,7 @@ theme.py           design tokens and the Pillow painter behind them: the palette
 widgets.py         the panel's own widgets, since Tk has neither rounded corners nor soft shadows nor hover: cards, buttons, choices, switch, field, tabs, scrollbar, scroller, transcript, history row
 panel.py           always-on-top Tk panel, three tabs; built unmapped and kept in the tray
 overlay.py         focusless chip: eleven bars over a clock, antialiased Pillow plate, centred on the work area
-settings.py        settings.json: hotkey list, interface language, interface theme, recording device and six on/off switches, atomic write, defaults on anything unusable
+settings.py        settings.json: hotkey list, interface language, interface theme, recording device, six on/off switches, the layout lent to the window being typed in and the combination pressed to quiet a layout switcher; atomic write, defaults on anything unusable
 corrector.py       own-word correction on finished utterances, difflib, cutoff in one constant, plus the glue that repairs a word the model split across a space
 text.py            every user visible string, ru and en, plus the language switch
 tray.py            pystray icon and menu

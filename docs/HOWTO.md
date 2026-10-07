@@ -321,7 +321,7 @@ Vosk\                             the checkout folder, the project itself is Win
     │       ├── widgets.py         the panel's own widgets: cards, buttons, switches,
     │       │                      the device dropdown
     │       ├── overlay.py         recording chip: eleven bars over an elapsed clock
-│       ├── settings.py        settings.json: hotkey, switches, atomic write
+│       ├── settings.py        settings.json: hotkey, switches, layout, switcher key, atomic write
 │       ├── corrector.py       own-word correction after the decode
 │       ├── text.py            every user visible string, ru and en
 │       ├── tray.py            pystray icon and menu
@@ -345,7 +345,7 @@ Vosk\                             the checkout folder, the project itself is Win
 │   ├── build_exe.py          builds dist\WinVosk\, see below
 ├── phrases.txt               optional list of your own words, see below
 ├── fonts\                    Space Grotesk and JetBrains Mono, with their licences
-├── settings.json             written by the Настройки tab, see below
+├── settings.json             written by the first run and by the Настройки tab, see below
 ├── WinVosk.bat               launcher, resolves everything from %~dp0
 ├── WinVosk.spec              PyInstaller build definition
 ├── AGENTS.md                 notes for agents working in this repository
@@ -368,7 +368,7 @@ its `base dir` line, and that is the only place the current location matters.
 `settings.json` is the one file here that is machine state rather than part of
 the checkout: it is ignored by git and can be deleted freely, which costs the
 default hotkey, the default states of the six switches, the theme and the
-language, nothing else.
+language, nothing else — and the next start writes it back with those defaults.
 
 ## Model
 
@@ -609,6 +609,10 @@ have to be out of the way before a probe can assert on focus.
 # the chip's palette, its colour key and the settings tab's scroll position
 .\.venv\Scripts\python.exe .\tools\chip_probe.py
 
+# whether a hook behind ours sees the keys switcher_key injects: MEASUREMENT,
+# not a check, and it presses the keys — run it from a Notepad window
+.\.venv\Scripts\python.exe .\tools\switcher_probe.py
+
 # which of your own words the model can hear
 .\.venv\Scripts\python.exe .\src\run.py --vocab-check
 ```
@@ -644,6 +648,31 @@ preview with a scripted or a real microphone and writes geometry changes back in
 `chip_*` roles of three palettes and belong in `theme.py` next to the palette they
 are for, and the clock's typeface is `theme.mono(CLOCK_SIZE)`. `--self-test` proves
 the arithmetic and the source writer and prints `VERDICT: PASS` or `FAIL`.
+
+`switcher_probe.py` is a measurement, not a check, because what it measures is a
+third party's hook. `switcher_key` swallows the six events it injects, so no window
+ever sees them, and that swallow is what starves the switcher in one of the two
+possible orders: Windows calls the most recently installed hook first, so a
+switcher whose hook was installed after ours never sees the burst, and the feature
+is a no-op that `app.log` reports as a success. Nothing at run time can tell the
+orders apart, so this installs a real `WH_KEYBOARD_LL` — which makes it the newest,
+and therefore the first — sends the combination **without swallowing anything**,
+and records for each event the return of `CallNextHookEx`. Non-zero means a hook
+behind it claimed the event: the switcher is reachable by pressing keys, and it is
+behind us, which is exactly the order in which swallowing starves it. All zeros mean
+nobody claimed them, which is not proof the switcher ignored them — a hotkey handler
+may act and let the event through — so the last word is what the switcher's own
+window shows before and after a run.
+
+It presses the keys for real, so a context menu may open in whatever window has the
+focus; run it from a Notepad window. Two transports are sent, virtual key codes and
+scan codes, because a hook may read either and one that ignores one is no evidence
+about the other, and `dwExtraInfo` is left at zero because part of the question is
+whether a hook reacts to a burst carrying nothing that marks it as ours. Run
+`tools\cleanup.py` first: a live WinVosk has its own hook in the chain answering `0`,
+and a silence behind that is ambiguous. It refuses to report success when nothing
+was measured — a locked session gives `SendInput` → 0 and an empty log, which is
+worth saying rather than printing six zeros and calling it a finding.
 
 `settings_probe.py` checks the hotkey plumbing and the file: that every key the
 capture can be given has a name and that the name round trips through the
@@ -1029,7 +1058,7 @@ combination, and the field, the footer and the tray header show it alone.
 
 ### Where the settings are stored
 
-In `settings.json` in the project root, ten keys:
+In `settings.json` in the project root, twelve keys:
 
 ```json
 {
@@ -1044,9 +1073,42 @@ In `settings.json` in the project root, ten keys:
   "write_history": true,
   "language": "en",
   "theme": "light",
-  "input_device": null
+  "input_device": null,
+  "dictate_layout": "00000409",
+  "switcher_key": ""
 }
 ```
+
+The last two are the keyboard's, and neither has a control in the panel. They are
+described where they are used: `dictate_layout` under
+[How the text is inserted](#how-the-text-is-inserted), and `switcher_key` in the
+same section, under the layout auto-switcher that rewrites what arrives.
+
+**The release archive ships no `settings.json` at all.** `tools\package_release.py`
+deletes one if the build folder happens to hold it and its audit refuses to finish
+if any file of that name survives, because the only `settings.json` that can ever
+be in `dist\WinVosk\` is this machine's own: its hotkeys, its theme, its recording
+device. The application writes one on its first run instead, next to the exe, from
+`settings.defaults()`. That is why the schema above exists once — in
+`settings.defaults()` — and not twice, in the packager and in the accessor.
+
+`settings.ensure_file()` is called once from `App.__init__`, and it is a creation
+and never an edit: an existing file is the user's whatever is in it, and a file
+that exists but cannot be parsed is left alone too, because `load` has already
+reported it and overwriting would destroy whatever the hand edit was reaching for.
+Deleting the file is therefore a way to reset everything, and the next start brings
+it back with the defaults.
+
+Every one of the twelve keys is written out, **including the two that are empty** —
+`input_device: null` and `switcher_key: ""`. That is the point of writing them: a
+key that is absent and a key set to its default read the same to the application
+but not to a person opening the file, and this file is the list of what can be
+changed. The two empty values are also the two answers that are facts about the
+machine rather than choices: the system default device and no switcher combination
+at all. Nothing in `defaults()` reads `load()`, which is the whole care there — a
+generator asking the accessors what the settings currently hold would read the file
+it is about to write and seed a fresh copy with whatever was already there.
+`tools\release_probe.py` pins all of this.
 
 `input_device` is `null` for the system default and otherwise the **name** of a
 recording device. A name, not an index: a PortAudio index is a position in a list
@@ -1327,19 +1389,25 @@ leaves the space standing where the word grew — «ии» reaches the screen as
 cannot be remapped by a layout, but they can still be swallowed, so no insertion
 method is proof against a third party hook; fewer Backspaces is fewer chances.
 
-**A keyboard layout switcher can rewrite what arrives.** Every character above
+**A layout auto-switcher can rewrite what arrives.** Every character above
 is sent as `KEYEVENTF_UNICODE`, which the layout of the target cannot change: a
 Latin layout produces Russian text correctly. But a switcher on the chain is
 watching *layouts*, not codepoints, and one with auto-replace on will rewrite
-what it believes was typed. Measured on the machine this was found on: Punto
-Switcher turned `содержать одинаковые данные` into `содержат?D>D>/Bd.bm й данное`
-while `logs\app.log` recorded every character sent as correct Cyrillic, and the
-user watched the tray icon switching. Two of its settings rewrite input —
+what it believes was typed.
+
+That is the class of program this section is about — a **layout auto-switcher** —
+and every measurement below was taken on one of them: Punto Switcher, the one
+Yandex installs with its browser. The names, the paths and the switches are that
+program's; a different auto-switcher has its own, and the mechanism is the class's
+rather than the names'. Measured on the machine this was found on: Punto Switcher
+turned `содержать одинаковые данные` into `содержат?D>D>/Bd.bm й данное` while
+`logs\app.log` recorded every character sent as correct Cyrillic, and the user
+watched the tray icon switching. Two of its settings rewrite input —
 `AutoReplaceAlways` and `DisablePreHandle`, in
 `%APPDATA%\Yandex\Punto Switcher\User Data\preferences.xml` — and
 `Data\default-conf.json` in its install directory carries
-`hook.patch_layout_funcs: ["win10"]`, which is why its hook acts on the layout
-at all.
+`hook.patch_layout_funcs: ["win10"]`, which is why its hook acts on the layout at
+all.
 
 Turning auto-replace off in that program's own settings removes the corruption
 with no change here. **It is not always an option**: the switch is not written
@@ -1351,21 +1419,94 @@ switcher for work cannot simply leave it off. So there is a second answer, in
 "dictate_layout": "00000409"
 ```
 
-The layout the foreground window is asked for while a recording runs, in any
-form `LoadKeyboardLayout` accepts (`00000409`, `0409`, `en-US`). The layout that
-was there before is read from the target thread and posted back to the same
-window when the recording ends, so whatever the user had is what they get. It
-is engaged from the one place every kind of recording starts and stops, so the
-key coming up, a second press in toggle mode and the session ceiling all put it
-back, and the shutdown path does it again in case none of them ran. Empty means
-the layout is never touched at all, which is the default: a machine with no
-switcher must not see its layout indicator move every time a recording starts.
+The layout the foreground window is asked for while a recording runs, as a
+language id: `00000409` for English, `00000419` for Russian, and `0409` for the
+short form of the first. An alias such as `en-US` is **refused** rather than
+quietly answered with the system default — see `LayoutGuard._load` for the
+measurements, and `tools\layout_probe.py` for the table. The layout that was there
+before is read from the target thread and posted back to the same window when the
+recording ends, so whatever the user had is what they get. It is engaged from the
+one place every kind of recording starts and stops, so the key coming up, a second
+press in toggle mode and the session ceiling all put it back, and the shutdown
+path does it again in case none of them ran. An empty string means the layout is
+never touched at all. It ships as `00000409`, because the damage above is not
+hypothetical; a machine with no switcher and no English layout is the case that
+sets `""`.
 
 Two guard rails on it. The request is `WM_INPUTLANGCHANGEREQUEST` to the
 foreground window, so it only does anything while a real target is in front and
 the app's own panel is never switched. And the layout is verified to have
 actually changed before it is recorded as taken, so a shell that declined the
 request leaves nothing held and consequently nothing to hand back.
+
+**Asking the switcher to be quiet: `switcher_key`.** Lending a layout takes the
+trigger away only from a switcher that acts on the layout. One that acts on the key
+events themselves is told nothing by that and goes on rewriting — so there is a
+second, more direct answer, and it is in `settings.json` too:
+
+```json
+"switcher_key": "ctrl+shift+f10"
+```
+
+The combination is pressed once before the microphone opens and once more after
+the tail has been typed, so a switcher whose own hotkey is bound to "turn
+auto-replace off" is off for exactly the length of the sentence. `ctrl+shift+f10`
+is what Punto Switcher can be told to bind to that switch; any combination
+`hotkey.parse` accepts will do, and an empty string — the shipped value — means
+nothing is ever pressed. Empty rather than filled is deliberate, and unlike
+`dictate_layout`: this is aimed at one program, and a combination injected on
+every recording of a machine that has no switcher is a combination every
+application has to be trusted to ignore.
+
+What this could and could not be measured to do, on that machine:
+
+- **The switcher processes injected keystrokes.** Typing `ghbdtn` as real key
+  events into a native EDIT control came back as «привет», so its hook is in the
+  chain and looking at what arrives.
+- **It processes injected *hotkeys* too, as long as they reach it.** The first
+  version of this feature swallowed the six events it injected, and Windows calls
+  the most recently installed low level hook first: on the ordinary machine — the
+  switcher up for hours, WinVosk restarted — this application's own hook was
+  asked about the burst first and swallowed it on the switcher's behalf. The log
+  said `switcher key … pressed` and the words were rewritten exactly as before,
+  which is the shape of a success that changed nothing. `tools\switcher_probe.py`
+  exists because that order cannot be told from the outside. Passing the events on
+  rather than swallowing them is what made the combination answer, and the answer
+  was confirmed by hand: with `switcher_key` named, the auto-replace is off for
+  the length of the phrase, the text arrives unmodified, and the switcher is on
+  again once the tail has been typed.
+- **What was measured and does not work, so nobody tries it again:** the injected
+  mark. `SendInput` sets `LLKHF_INJECTED`, and a hook that clears that bit and
+  `dwExtraInfo` in the `KBDLLHOOKSTRUCT` before calling `CallNextHookEx` really
+  does deliver clean flags — and the combination was discarded there too. The mark
+  lives in the input context rather than in the struct the hook is handed, so
+  there was never anything to arrange about flags. It is not the answer either:
+  the combination works by arriving, not by looking less injected.
+- **So passing them on is a trade, and the price was measured.** A delivered
+  `Ctrl+Shift+F10` opened no context menu in Explorer or Notepad, so the cost is
+  the low one, and `Escape` follows the combination as insurance for applications
+  that could not be measured here.
+
+Three things make it safe rather than clever:
+
+- **The burst never enters the hook's `_pressed`**, so a combination named as
+  `switcher_key` cannot start a recording of its own even though the keys are
+  delivered. That is what `SYNTHETIC_TAG` is for now: the tag marks the six events
+  as ours, and the hook leaves them out of its matching.
+- **`release` presses nothing it did not press**, and is called from the stop path
+  and from the shutdown path. A switcher left off is a user's afternoon, not a log
+  line; that is the whole reason the second press exists at all, and it is also
+  why an unanswered burst is a toggle: the two presses are one switch flipped
+  and flipped back, not a request and a cancellation.
+- **`engage` refuses when nothing is in front to type into**, so the application
+  never presses a combination at its own window.
+
+Whether an auto-switcher answers is still its own business: nothing in this
+application can read its state, so `logs\app.log` answers only the question this
+side owns. `switcher key … pressed` means the six events went out, and every reason
+they might not have is logged by name, as `LayoutGuard.engage` logs its own. That
+the combination turns the switcher off was checked by hand — there is no way to
+check it from in here.
 
 Two guard rails:
 

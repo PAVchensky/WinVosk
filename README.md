@@ -458,7 +458,9 @@ menu appears, the line above it names the key that got through.
 
 ### Where the settings live
 
-`settings.json`, next to the exe (or in the checkout root):
+`settings.json`, next to the exe (or in the checkout root). **The first run creates
+it** — with every setting and its default; it is not in the download, so there is
+nothing to decide about a file you have not changed yet:
 
 ```json
 {
@@ -471,25 +473,39 @@ menu appears, the line above it names the key that got through.
   "write_history": true,
   "language": "en",
   "theme": "studio",
-  "input_device": null
+  "input_device": null,
+  "dictate_layout": "00000409",
+  "switcher_key": ""
 }
 ```
 
 `theme` is `studio`, `light` or `dark`; see [Appearance](#appearance). `input_device`
 is `null` for the system default and otherwise the name of a recording device —
-see [Recording device](#recording-device).
+see [Recording device](#recording-device). The last two keys are about other
+programs, and each has its own section below.
+
+Two keys are empty because their value is a fact about *your* machine that the
+application cannot know: `input_device` is `null`, meaning "whatever the system
+calls the default", and `switcher_key` is `""`, meaning nothing is ever pressed.
 
 Nothing in that file can stop the app from starting. A missing, malformed or
 wrongly shaped file costs one line in `logs\app.log` and the defaults are used;
 a byte order mark (Notepad and PowerShell both add one) is read correctly; a
 combination that cannot be parsed costs only itself rather than crashing under
-`pythonw.exe` where nobody would see the traceback. **Reset** and
-deleting the file both restore the defaults.
+`pythonw.exe` where nobody would see the traceback. **Reset** and deleting the
+file both restore the defaults — and a deleted file is written again with them on
+the next start.
+
+The file is created once and never rewritten afterwards. A file you edited is
+yours, whatever is in it, and a broken one is not overwritten either: there is
+already a line about it in the log, and overwriting would throw away whatever the
+edit was reaching for.
 
 ### The keyboard layout during a recording
 
 `dictate_layout`, in `settings.json` next to the exe. It names a language id —
-`00000409` for English, `00000419` for Russian — and it ships as `00000409`.
+`00000409` for English, `00000419` for Russian — and the file the first run writes
+has `00000409` in it.
 
 While a recording runs, the window you are typing into is lent that layout, and
 your own is put back the moment the recording ends. The switch happens on the
@@ -497,8 +513,9 @@ hotkey, before the microphone opens.
 
 This is on by default because of what it prevents. Our characters go out as
 `KEYEVENTF_UNICODE`, so a layout cannot change what they become — but a keyboard
-hook further down the chain is watching *layouts*, and Punto Switcher with
-`AutoReplaceAlways` on turned `содержать одинаковые данные` into
+hook further down the chain is watching *layouts*, and a **layout auto-switcher** —
+Punto Switcher is the one this was found on, and the next section is about it —
+with `AutoReplaceAlways` on turned `содержать одинаковые данные` into
 `содержат?D>D>/Bd.bm й данное` while every `typed` value in the log was correct
 Cyrillic. Lending the window English takes the trigger away.
 
@@ -512,6 +529,50 @@ Every press says what happened in `logs\report.txt`: `borrowed for the
 recording`, `not lent: … did not answer`, or `none configured`. A window that
 never pumps messages cannot be switched from outside, and that is the one case
 where the borrowed layout will not help.
+
+### Asking the layout auto-switcher to be quiet
+
+`switcher_key`, in `settings.json`. A combination such as `ctrl+shift+f10`, sent
+once before the recording and once more after it. It ships empty, so nothing is
+pressed until you name a combination.
+
+The borrowed layout above is enough for a switcher that watches the *layout*.
+One that watches the keys themselves is told nothing by that and goes on
+rewriting what arrives — so here the same question is asked outright: the
+combination is sent as real keys, and a switcher told to turn its auto-replace
+off with that combination is quiet for exactly as long as the phrase lasts. Name
+the combination your own switcher answers with.
+
+Those two settings exist because of one program, **Punto Switcher** (Yandex), so
+the numbers below are one machine's, not the shape of every switcher. It keeps
+its hotkeys in
+`%APPDATA%\Yandex\Punto Switcher\User Data\preferences.xml` under
+`PuntoHotkeys`, and the auto-replace switch itself is `AutoReplaceAlways` in the
+same file; the program reads it only at start up, so the reliable way to turn
+auto-replace off is in its own settings, or a restart of Punto after the edit.
+
+```json
+"switcher_key": "ctrl+shift+f10"
+```
+
+The keys **do reach** the window you are typing in. That is a trade, and it was
+measured rather than assumed. All six carry a mark that tells this application's
+own hook they are not its own, but they are passed on rather than swallowed:
+Windows asks the most recently installed hook first, so our hook heard about them
+before the switcher did, and the first version swallowed them right here — which
+is why they never got as far as the switcher, and why `app.log` said the key was
+pressed while the text came out rewritten exactly as before. A delivered
+`Ctrl+Shift+F10` opened no context menu in Explorer or Notepad; an `Escape`
+follows the combination as insurance for an application that does open one.
+
+With that fixed, the combination is answered: it turns the switcher's auto-replace
+off for the length of the recording and the words arrive unmodified, which was
+checked by hand on this machine. Whether a switcher answers is still its own
+business — nothing here can read its state — so each press writes what this side
+did in `logs\app.log`: `switcher key … pressed`, or why it did not. If the text
+still comes out rewritten, that combination is not bound to auto-replace in your
+switcher: its own settings are the reliable place for that, and the borrowed
+layout above is the only thing the application can do by itself.
 
 ### Settings that are not switches
 
