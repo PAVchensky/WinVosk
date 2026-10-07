@@ -26,10 +26,6 @@
 > **Private by design:** speech recognition runs locally on your CPU. No account,
 > telemetry, cloud API or network call is required.
 
-<p align="center">
-  <img src="docs/img/WinVosk-line.png" alt="A gold sound wave drawn across a dark grid, beside the words SPEAK - IT TYPES, and under them NOTHING LEAVES THE MACHINE">
-</p>
-
 ---
 
 ## TL;DR
@@ -1086,3 +1082,7 @@ The models are the ones Vosk publishes and carry their own licences.
 - User guide and internals: [`docs/HOWTO.md`](docs/HOWTO.md)
 - Notes for agents and contributors: [`AGENTS.md`](AGENTS.md)
 - Project context: [`project.md`](project.md)
+
+<p align="center">
+  <img src="docs/img/WinVosk-line.png" alt="A gold sound wave drawn across a dark grid, beside the words SPEAK - IT TYPES, and under them NOTHING LEAVES THE MACHINE">
+</p>
